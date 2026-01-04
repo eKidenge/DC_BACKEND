@@ -377,7 +377,7 @@ class ConsultationRequestViewSet(viewsets.ModelViewSet):
             'message': 'Consultation marked as completed'
         })
     
-        def match_professional(self, consultation):
+    def match_professional(self, consultation):
         """AI-powered professional matching"""
         # Use AI to find best professional
         best_professional = SimpleAIMatcher.find_best_professional(
