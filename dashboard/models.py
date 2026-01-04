@@ -252,3 +252,5 @@ class CallHistory(models.Model):
     class Meta:
         verbose_name_plural = "Call Histories"
         ordering = ['-start_time']
+# Alias for backward compatibility
+Notification = ProfessionalNotification
