@@ -117,7 +117,8 @@ class IncomingCall(models.Model):
         related_name='dashboard_incoming_calls'  # Changed from 'incoming_calls'
     )
     
-    consultation = models.ForeignKey('calls.Consultation', on_delete=models.CASCADE, null=True, blank=True)
+    #consultation = models.ForeignKey('calls.Consultation', on_delete=models.CASCADE, null=True, blank=True)
+    consultation_id = models.IntegerField(null=True, blank=True, help_text="ID of the consultation from any app")
     client_name = models.CharField(max_length=255)
     client_phone = models.CharField(max_length=20, blank=True, null=True)
     category = models.CharField(max_length=100)
