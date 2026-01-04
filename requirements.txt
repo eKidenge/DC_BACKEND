@@ -1,0 +1,13 @@
+Django==5.2.7
+djangorestframework==3.16.1
+django-cors-headers==4.4.0
+channels==4.1.0
+django-filter==23.2
+
+python-decouple==3.8
+python-dotenv==1.1.0
+
+#Pillow==10.2.0
+
+stripe==14.1.0
+gunicorn==21.2.0
