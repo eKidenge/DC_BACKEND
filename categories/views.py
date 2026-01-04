@@ -117,11 +117,11 @@ class SimpleAIMatcher:
             ).count()
         
         load_penalty = 0
-        if current_calls >= 3:
-            load_penalty = -30
-        elif current_calls == 2:
-            load_penalty = -15
-        elif current_calls == 1:
+        if current_calls >= 10:
+            load_penalty = -20
+        elif current_calls == 5:
+            load_penalty = -10
+        elif current_calls == 3:
             load_penalty = -5
         
         score += load_penalty
