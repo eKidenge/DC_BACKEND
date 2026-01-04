@@ -408,6 +408,7 @@ class ConsultationRequestViewSet(viewsets.ModelViewSet):
                 client_phone=consultation.client.phone or '',
                 category=consultation.get_category_display(),
                 duration=consultation.duration_minutes,
+                estimated_earnings=estimated_earnings,  # ADD THIS
                 expires_at=timezone.now() + timezone.timedelta(minutes=5),
                 status='pending'
             )
