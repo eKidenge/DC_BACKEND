@@ -377,7 +377,7 @@ class ConsultationRequestViewSet(viewsets.ModelViewSet):
             'message': 'Consultation marked as completed'
         })
     
-    def match_professional(self, consultation):
+        def match_professional(self, consultation):
         """AI-powered professional matching"""
         # Use AI to find best professional
         best_professional = SimpleAIMatcher.find_best_professional(
@@ -400,15 +400,18 @@ class ConsultationRequestViewSet(viewsets.ModelViewSet):
             
             # Create incoming call in dashboard
             from dashboard.models import IncomingCall
+            
+            # Calculate estimated earnings BEFORE creating IncomingCall
+            estimated_earnings = consultation.total_amount if consultation.total_amount else 0
+            
             IncomingCall.objects.create(
                 professional=best_professional,
-                #consultation=consultation,
                 consultation_id=consultation.id,  # ← CHANGE TO consultation_id
                 client_name=consultation.client.get_full_name(),
                 client_phone=consultation.client.phone or '',
                 category=consultation.get_category_display(),
                 duration=consultation.duration_minutes,
-                estimated_earnings=estimated_earnings,  # ADD THIS
+                estimated_earnings=estimated_earnings,  # ADD THIS - Now defined
                 expires_at=timezone.now() + timezone.timedelta(minutes=5),
                 status='pending'
             )
