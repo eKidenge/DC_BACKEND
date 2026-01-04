@@ -402,7 +402,8 @@ class ConsultationRequestViewSet(viewsets.ModelViewSet):
             from dashboard.models import IncomingCall
             IncomingCall.objects.create(
                 professional=best_professional,
-                consultation=consultation,
+                #consultation=consultation,
+                consultation_id=consultation.id,  # ← CHANGE TO consultation_id
                 client_name=consultation.client.get_full_name(),
                 client_phone=consultation.client.phone or '',
                 category=consultation.get_category_display(),
