@@ -7,26 +7,27 @@ from django.utils import timezone
 from datetime import timedelta, datetime
 import json
 
-# Add this line to your imports at the top:
-from .models import (
-    ProfessionalAvailability, ProfessionalStat,
-    IncomingCall, ProfessionalNotification, ProfessionalCalendar, CallHistory,
-    CallRequest  # <-- ADD THIS
-)
-
 # ============================================
-# UPDATED IMPORTS - Use accounts models
+# FIXED IMPORTS - No duplicates
 # ============================================
 from accounts.models import User, ProfessionalProfile as AccountsProfessionalProfile
 from .models import (
     ProfessionalAvailability, ProfessionalStat,
-    IncomingCall, ProfessionalNotification, ProfessionalCalendar, CallHistory
+    IncomingCall, ProfessionalNotification, ProfessionalCalendar, 
+    CallHistory, CallRequest  # <-- CallRequest is already here
 )
+
+# FIXED: Remove duplicate import of the models above
+
+# ============================================
+# FIXED SERIALIZER IMPORTS - Add CallRequestSerializer
+# ============================================
 from .serializers import (
     AccountsProfessionalProfileSerializer, ProfessionalAvailabilitySerializer,
     ProfessionalStatSerializer, IncomingCallSerializer,
     ProfessionalNotificationSerializer, ProfessionalCalendarSerializer,
-    CallHistorySerializer
+    CallHistorySerializer,
+    CallRequestSerializer  # <-- ADD THIS LINE
 )
 
 from django.db.models import Sum, Count, Avg, Q
