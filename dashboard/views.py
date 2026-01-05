@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -7,47 +7,57 @@ from django.utils import timezone
 from datetime import timedelta, datetime
 import json
 
+# Add this line to your imports at the top:
+from .models import (
+    ProfessionalAvailability, ProfessionalStat,
+    IncomingCall, ProfessionalNotification, ProfessionalCalendar, CallHistory,
+    CallRequest  # <-- ADD THIS
+)
+
 # ============================================
-# IMPORTS
+# UPDATED IMPORTS - Use accounts models
 # ============================================
 from accounts.models import User, ProfessionalProfile as AccountsProfessionalProfile
 from .models import (
     ProfessionalAvailability, ProfessionalStat,
-    IncomingCall, ProfessionalNotification, ProfessionalCalendar, 
-    CallHistory, CallRequest
+    IncomingCall, ProfessionalNotification, ProfessionalCalendar, CallHistory
 )
 from .serializers import (
     AccountsProfessionalProfileSerializer, ProfessionalAvailabilitySerializer,
     ProfessionalStatSerializer, IncomingCallSerializer,
     ProfessionalNotificationSerializer, ProfessionalCalendarSerializer,
-    CallHistorySerializer, CallRequestSerializer
+    CallHistorySerializer
 )
 
 from django.db.models import Sum, Count, Avg, Q
 from django.core.cache import cache
 
 # ============================================
-# VIEWSETS FOR YOUR ROUTER
+# UPDATED VIEWSETS
 # ============================================
 
 class ProfessionalProfileViewSet(viewsets.ModelViewSet):
+    # CHANGED: Use AccountsProfessionalProfileSerializer
     serializer_class = AccountsProfessionalProfileSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        # CHANGED: Use AccountsProfessionalProfile
         return AccountsProfessionalProfile.objects.filter(user=self.request.user)
     
     @action(detail=False, methods=['post'])
     def toggle_online(self, request):
         """Toggle professional's online status"""
         try:
+            # CHANGED: Use AccountsProfessionalProfile
             profile = AccountsProfessionalProfile.objects.get(user=request.user)
             profile.is_online = not profile.is_online
             profile.save()
             
             # Update availability if exists
             try:
-                availability = ProfessionalAvailability.objects.get(professional=profile)
+                # CHANGED: Use dashboard_availability
+                availability = profile.dashboard_availability
                 availability.is_available = profile.is_online
                 availability.save()
             except ProfessionalAvailability.DoesNotExist:
@@ -69,6 +79,7 @@ class ProfessionalAvailabilityViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        # CHANGED: Get profile from accounts
         profile = AccountsProfessionalProfile.objects.get(user=self.request.user)
         return ProfessionalAvailability.objects.filter(professional=profile)
     
@@ -76,6 +87,7 @@ class ProfessionalAvailabilityViewSet(viewsets.ModelViewSet):
     def update_settings(self, request):
         """Update availability settings"""
         try:
+            # CHANGED: Get profile from accounts
             profile = AccountsProfessionalProfile.objects.get(user=request.user)
             availability, created = ProfessionalAvailability.objects.get_or_create(
                 professional=profile
@@ -115,6 +127,7 @@ class ProfessionalStatViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        # CHANGED: Get profile from accounts
         profile = AccountsProfessionalProfile.objects.get(user=self.request.user)
         return ProfessionalStat.objects.filter(professional=profile)
     
@@ -122,6 +135,7 @@ class ProfessionalStatViewSet(viewsets.ReadOnlyModelViewSet):
     def summary(self, request):
         """Get professional stats summary"""
         try:
+            # CHANGED: Get profile from accounts
             profile = AccountsProfessionalProfile.objects.get(user=request.user)
             stats, created = ProfessionalStat.objects.get_or_create(professional=profile)
             
@@ -162,6 +176,7 @@ class IncomingCallViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        # CHANGED: Get profile from accounts
         profile = AccountsProfessionalProfile.objects.get(user=self.request.user)
         
         # Filter by status if provided
@@ -177,6 +192,7 @@ class IncomingCallViewSet(viewsets.ModelViewSet):
     def accept(self, request, pk=None):
         """Accept an incoming call"""
         try:
+            # CHANGED: Get profile from accounts
             profile = AccountsProfessionalProfile.objects.get(user=request.user)
             incoming_call = self.get_object()
             
@@ -333,6 +349,7 @@ class ProfessionalCalendarViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        # CHANGED: Get profile from accounts
         profile = AccountsProfessionalProfile.objects.get(user=self.request.user)
         
         # Filter by date range if provided
@@ -355,6 +372,7 @@ class ProfessionalCalendarViewSet(viewsets.ModelViewSet):
     def upcoming(self, request):
         """Get upcoming events"""
         try:
+            # CHANGED: Get profile from accounts
             profile = AccountsProfessionalProfile.objects.get(user=request.user)
             now = timezone.now()
             
@@ -364,7 +382,7 @@ class ProfessionalCalendarViewSet(viewsets.ModelViewSet):
                 start_time__gte=now,
                 end_time__lte=now + timedelta(days=7),
                 is_cancelled=False
-            ).order_by('start_time')[:10]
+            ).order_by('start_time')[:10]  # Limit to 10 events
             
             serializer = self.get_serializer(upcoming_events, many=True)
             return Response(serializer.data)
@@ -379,6 +397,7 @@ class CallHistoryViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        # CHANGED: Get profile from accounts
         profile = AccountsProfessionalProfile.objects.get(user=self.request.user)
         
         # Filter by date if provided
@@ -391,15 +410,12 @@ class CallHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         
         return queryset.order_by('-start_time')
 
-# ============================================
-# API VIEWS FOR YOUR URL PATTERNS
-# ============================================
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def dashboard_summary(request):
     """Get dashboard summary data"""
     try:
+        # CHANGED: Get profile from accounts
         profile = AccountsProfessionalProfile.objects.get(user=request.user)
         
         # Get stats
@@ -440,7 +456,103 @@ def dashboard_summary(request):
         }, status=status.HTTP_404_NOT_FOUND)
 
 # ============================================
-# CALL REQUEST VIEWS FOR YOUR URL PATTERNS
+# ADDITIONAL UTILITY VIEWS
+# ============================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def check_professional_status(request):
+    """Check if user has a professional profile"""
+    try:
+        profile = AccountsProfessionalProfile.objects.get(user=request.user)
+        return Response({
+            'is_professional': True,
+            'profile_id': profile.id,
+            'is_online': profile.is_online,
+            'is_verified': profile.is_verified
+        })
+    except AccountsProfessionalProfile.DoesNotExist:
+        return Response({
+            'is_professional': False,
+            'message': 'User does not have a professional profile'
+        })
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def update_professional_profile(request):
+    """Update professional profile (partial update)"""
+    try:
+        profile = AccountsProfessionalProfile.objects.get(user=request.user)
+        
+        # Allowed fields to update
+        allowed_fields = ['hourly_rate', 'bio', 'experience_years', 'languages']
+        
+        for field in allowed_fields:
+            if field in request.data:
+                setattr(profile, field, request.data[field])
+        
+        profile.save()
+        
+        return Response({
+            'status': 'success',
+            'message': 'Profile updated successfully',
+            'profile': AccountsProfessionalProfileSerializer(profile).data
+        })
+    except AccountsProfessionalProfile.DoesNotExist:
+        return Response({
+            'status': 'error',
+            'message': 'Professional profile not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def professional_analytics(request):
+    """Get professional analytics data"""
+    try:
+        profile = AccountsProfessionalProfile.objects.get(user=request.user)
+        
+        # Get stats
+        stats, _ = ProfessionalStat.objects.get_or_create(professional=profile)
+        
+        # Calculate monthly earnings trend (last 6 months)
+        six_months_ago = timezone.now() - timedelta(days=180)
+        monthly_calls = CallHistory.objects.filter(
+            professional=profile,
+            start_time__gte=six_months_ago
+        ).extra({
+            'month': "strftime('%%Y-%%m', start_time)"
+        }).values('month').annotate(
+            total_earnings=Sum('earnings'),
+            call_count=Count('id')
+        ).order_by('month')
+        
+        # Get top categories
+        from categories.models import ServiceCategory
+        categories = profile.service_categories.all()
+        
+        return Response({
+            'stats': ProfessionalStatSerializer(stats).data,
+            'monthly_earnings': list(monthly_calls),
+            'categories': [
+                {
+                    'id': cat.id,
+                    'name': cat.name,
+                    'description': cat.description
+                } for cat in categories
+            ],
+            'total_earnings': float(stats.today_earnings + stats.week_earnings + stats.month_earnings),
+            'average_rating': float(profile.rating)
+        })
+    except AccountsProfessionalProfile.DoesNotExist:
+        return Response({
+            'status': 'error',
+            'message': 'Professional profile not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+
+# JUST ADDED TO REQUEST CALL BY CLIENTS TO PROFESSIONALS
+# ============================================
+# CALL REQUEST VIEWS (ADD THESE TO YOUR EXISTING VIEWS.PY)
 # ============================================
 
 @api_view(['POST'])
@@ -466,46 +578,45 @@ def create_call_request(request):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if professional is online
-        if not professional.is_online:
-            return Response(
-                {'error': 'Professional is currently offline'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Create call request
+        call_request = CallRequest.objects.create(
+            professional=professional,
+            client_id=data.get('client_id'),
+            client_name=data.get('client_name'),
+            client_phone=data.get('client_phone', ''),
+            call_type=data.get('call_type', 'video'),
+            duration=data.get('duration', 30),
+            consultation_id=data.get('consultation_id'),
+            amount=data.get('amount', 0),
+            category=data.get('category', 'Consultation'),
+            status='pending'
+        )
         
-        # Create call request using serializer
-        serializer = CallRequestSerializer(data=data)
-        if serializer.is_valid():
-            call_request = serializer.save(professional=professional)
-            
-            # Create notification for professional
-            ProfessionalNotification.objects.create(
-                user=professional.user,
-                notification_type='incoming_call',
-                title=f'Incoming Call Request',
-                message=f'{call_request.client_name} is requesting a {call_request.duration}-minute {call_request.get_call_type_display()} consultation.',
-                data={
-                    'call_request_id': call_request.id,
-                    'client_name': call_request.client_name,
-                    'call_type': call_request.call_type,
-                    'duration': call_request.duration,
-                    'amount': float(call_request.amount),
-                    'category': call_request.category,
-                    'room_id': call_request.room_id
-                },
-                priority=3
-            )
-            
-            return Response(
-                CallRequestSerializer(call_request).data,
-                status=status.HTTP_201_CREATED
-            )
-        else:
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
-            
+        # Create notification for professional
+        ProfessionalNotification.objects.create(
+            user=professional.user,
+            notification_type='incoming_call',
+            title=f'Incoming Call from {call_request.client_name}',
+            message=f'{call_request.client_name} is requesting a {call_request.get_call_type_display()} consultation.',
+            data={
+                'call_request_id': call_request.id,
+                'client_name': call_request.client_name,
+                'call_type': call_request.call_type,
+                'duration': call_request.duration,
+                'amount': float(call_request.amount),
+                'category': call_request.category,
+                'room_id': call_request.room_id
+            },
+            priority=3
+        )
+        
+        return Response({
+            'id': call_request.id,
+            'status': call_request.status,
+            'room_id': call_request.room_id,
+            'message': 'Call request created successfully'
+        }, status=status.HTTP_201_CREATED)
+        
     except Exception as e:
         return Response(
             {'error': str(e)},
@@ -518,20 +629,15 @@ def get_call_request(request, pk):
     """Get call request details"""
     try:
         call_request = CallRequest.objects.get(id=pk)
-        
-        # Check if user has permission to view this call
-        user = request.user
-        is_professional = hasattr(user, 'accountsprofessionalprofile') and call_request.professional.user == user
-        is_client = call_request.client_id == user.id
-        
-        if not (is_professional or is_client):
-            return Response(
-                {'error': 'Unauthorized to view this call'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = CallRequestSerializer(call_request)
-        return Response(serializer.data)
+        return Response({
+            'id': call_request.id,
+            'status': call_request.status,
+            'professional_id': call_request.professional.id,
+            'client_name': call_request.client_name,
+            'call_type': call_request.call_type,
+            'room_id': call_request.room_id,
+            'expires_at': call_request.expires_at
+        })
     except CallRequest.DoesNotExist:
         return Response(
             {'error': 'Call request not found'},
@@ -552,52 +658,14 @@ def update_call_status(request, pk):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Check if user is authorized to update this call
-        user = request.user
-        is_professional = hasattr(user, 'accountsprofessionalprofile') and call_request.professional.user == user
-        is_client = call_request.client_id == user.id
-        
-        if not (is_professional or is_client):
-            return Response(
-                {'error': 'Unauthorized to update this call'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Update status
-        old_status = call_request.status
         call_request.status = new_status
         
-        # Set timestamps
-        now = timezone.now()
-        if new_status == 'accepted' and old_status != 'accepted':
-            call_request.accepted_at = now
-        elif new_status == 'rejected' and old_status != 'rejected':
-            call_request.rejected_at = now
-            call_request.rejection_reason = request.data.get('reason', 'No reason provided')
-        elif new_status == 'connected' and old_status != 'connected':
-            call_request.connected_at = now
-        elif new_status == 'completed' and old_status != 'completed':
-            call_request.ended_at = now
+        if new_status == 'accepted':
+            call_request.accepted_at = timezone.now()
+        elif new_status == 'rejected':
+            call_request.rejected_at = timezone.now()
         
         call_request.save()
-        
-        # Create notification for the other party
-        if new_status in ['accepted', 'rejected'] and is_professional:
-            # Professional accepted/rejected, notify client
-            notification_user = User.objects.filter(id=call_request.client_id).first()
-            if notification_user:
-                ProfessionalNotification.objects.create(
-                    user=notification_user,
-                    notification_type='call_status_update',
-                    title=f'Call Request {new_status.capitalize()}',
-                    message=f'Your call request has been {new_status} by {call_request.professional.user.get_full_name()}',
-                    data={
-                        'call_request_id': call_request.id,
-                        'status': new_status,
-                        'room_id': call_request.room_id
-                    },
-                    priority=2
-                )
         
         return Response({
             'id': call_request.id,
@@ -616,54 +684,8 @@ def cancel_call_request(request, pk):
     """Cancel a call request"""
     try:
         call_request = CallRequest.objects.get(id=pk)
-        
-        # Check if user is authorized to cancel this call
-        user = request.user
-        is_professional = hasattr(user, 'accountsprofessionalprofile') and call_request.professional.user == user
-        is_client = call_request.client_id == user.id
-        
-        if not (is_professional or is_client):
-            return Response(
-                {'error': 'Unauthorized to cancel this call'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Check if call can be cancelled
-        if call_request.status not in ['pending', 'ringing']:
-            return Response(
-                {'error': f'Cannot cancel a call that is {call_request.status}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Cancel the call
         call_request.status = 'cancelled'
-        call_request.cancelled_at = timezone.now()
         call_request.save()
-        
-        # Create notification for the other party
-        if is_client:
-            # Client cancelled, notify professional
-            notification_user = call_request.professional.user
-            title = 'Call Cancelled'
-            message = f'{call_request.client_name} has cancelled the call request'
-        else:
-            # Professional cancelled, notify client
-            notification_user = User.objects.filter(id=call_request.client_id).first()
-            title = 'Call Cancelled'
-            message = f'{call_request.professional.user.get_full_name()} has cancelled the call request'
-        
-        if notification_user:
-            ProfessionalNotification.objects.create(
-                user=notification_user,
-                notification_type='call_cancelled',
-                title=title,
-                message=message,
-                data={
-                    'call_request_id': call_request.id,
-                    'cancelled_by': user.get_full_name()
-                },
-                priority=2
-            )
         
         return Response({
             'id': call_request.id,
@@ -689,11 +711,21 @@ def professional_pending_calls(request):
             status__in=['pending', 'ringing']
         ).order_by('-created_at')
         
-        serializer = CallRequestSerializer(pending_calls, many=True)
+        calls_data = []
+        for call in pending_calls:
+            calls_data.append({
+                'id': call.id,
+                'client_name': call.client_name,
+                'call_type': call.call_type,
+                'duration': call.duration,
+                'amount': float(call.amount),
+                'created_at': call.created_at,
+                'expires_at': call.expires_at
+            })
         
         return Response({
-            'pending_calls': serializer.data,
-            'count': len(serializer.data)
+            'pending_calls': calls_data,
+            'count': len(calls_data)
         })
     except AccountsProfessionalProfile.DoesNotExist:
         return Response(
