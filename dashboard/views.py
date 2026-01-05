@@ -541,3 +541,187 @@ def professional_analytics(request):
             'status': 'error',
             'message': 'Professional profile not found'
         }, status=status.HTTP_404_NOT_FOUND)
+
+
+# JUST ADDED TO REQUEST CALL BY CLIENTS TO PROFESSIONALS
+# ============================================
+# CALL REQUEST VIEWS (ADD THESE TO YOUR EXISTING VIEWS.PY)
+# ============================================
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_call_request(request):
+    """Create a new call request from client to professional"""
+    try:
+        data = request.data
+        
+        # Get professional
+        professional_id = data.get('professional')
+        if not professional_id:
+            return Response(
+                {'error': 'Professional ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            professional = AccountsProfessionalProfile.objects.get(id=professional_id)
+        except AccountsProfessionalProfile.DoesNotExist:
+            return Response(
+                {'error': 'Professional not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Create call request
+        call_request = CallRequest.objects.create(
+            professional=professional,
+            client_id=data.get('client_id'),
+            client_name=data.get('client_name'),
+            client_phone=data.get('client_phone', ''),
+            call_type=data.get('call_type', 'video'),
+            duration=data.get('duration', 30),
+            consultation_id=data.get('consultation_id'),
+            amount=data.get('amount', 0),
+            category=data.get('category', 'Consultation'),
+            status='pending'
+        )
+        
+        # Create notification for professional
+        ProfessionalNotification.objects.create(
+            user=professional.user,
+            notification_type='incoming_call',
+            title=f'Incoming Call from {call_request.client_name}',
+            message=f'{call_request.client_name} is requesting a {call_request.get_call_type_display()} consultation.',
+            data={
+                'call_request_id': call_request.id,
+                'client_name': call_request.client_name,
+                'call_type': call_request.call_type,
+                'duration': call_request.duration,
+                'amount': float(call_request.amount),
+                'category': call_request.category,
+                'room_id': call_request.room_id
+            },
+            priority=3
+        )
+        
+        return Response({
+            'id': call_request.id,
+            'status': call_request.status,
+            'room_id': call_request.room_id,
+            'message': 'Call request created successfully'
+        }, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_call_request(request, pk):
+    """Get call request details"""
+    try:
+        call_request = CallRequest.objects.get(id=pk)
+        return Response({
+            'id': call_request.id,
+            'status': call_request.status,
+            'professional_id': call_request.professional.id,
+            'client_name': call_request.client_name,
+            'call_type': call_request.call_type,
+            'room_id': call_request.room_id,
+            'expires_at': call_request.expires_at
+        })
+    except CallRequest.DoesNotExist:
+        return Response(
+            {'error': 'Call request not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_call_status(request, pk):
+    """Update call request status"""
+    try:
+        call_request = CallRequest.objects.get(id=pk)
+        new_status = request.data.get('status')
+        
+        if not new_status:
+            return Response(
+                {'error': 'Status is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        call_request.status = new_status
+        
+        if new_status == 'accepted':
+            call_request.accepted_at = timezone.now()
+        elif new_status == 'rejected':
+            call_request.rejected_at = timezone.now()
+        
+        call_request.save()
+        
+        return Response({
+            'id': call_request.id,
+            'status': call_request.status,
+            'message': f'Call status updated to {new_status}'
+        })
+    except CallRequest.DoesNotExist:
+        return Response(
+            {'error': 'Call request not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancel_call_request(request, pk):
+    """Cancel a call request"""
+    try:
+        call_request = CallRequest.objects.get(id=pk)
+        call_request.status = 'cancelled'
+        call_request.save()
+        
+        return Response({
+            'id': call_request.id,
+            'status': call_request.status,
+            'message': 'Call request cancelled'
+        })
+    except CallRequest.DoesNotExist:
+        return Response(
+            {'error': 'Call request not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def professional_pending_calls(request):
+    """Get pending calls for professional"""
+    try:
+        user = request.user
+        professional = AccountsProfessionalProfile.objects.get(user=user)
+        
+        pending_calls = CallRequest.objects.filter(
+            professional=professional,
+            status__in=['pending', 'ringing']
+        ).order_by('-created_at')
+        
+        calls_data = []
+        for call in pending_calls:
+            calls_data.append({
+                'id': call.id,
+                'client_name': call.client_name,
+                'call_type': call.call_type,
+                'duration': call.duration,
+                'amount': float(call.amount),
+                'created_at': call.created_at,
+                'expires_at': call.expires_at
+            })
+        
+        return Response({
+            'pending_calls': calls_data,
+            'count': len(calls_data)
+        })
+    except AccountsProfessionalProfile.DoesNotExist:
+        return Response(
+            {'error': 'Professional profile not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )

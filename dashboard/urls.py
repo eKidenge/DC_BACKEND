@@ -38,4 +38,11 @@ urlpatterns = [
     
     # Availability specific endpoints
     path('availability/update/', views.ProfessionalAvailabilityViewSet.as_view({'post': 'update_settings'}), name='update-availability-settings'),
-]
+
+    # Call Request URLs
+    path('call-requests/create/', views.create_call_request, name='create_call_request'),
+    path('call-requests/<int:pk>/', views.get_call_request, name='get_call_request'),
+    path('call-requests/<int:pk>/update-status/', views.update_call_status, name='update_call_status'),
+    path('call-requests/<int:pk>/cancel/', views.cancel_call_request, name='cancel_call_request'),
+    path('call-requests/pending/', views.professional_pending_calls, name='professional_pending_calls'),
+    ]

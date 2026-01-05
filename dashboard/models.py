@@ -252,5 +252,97 @@ class CallHistory(models.Model):
     class Meta:
         verbose_name_plural = "Call Histories"
         ordering = ['-start_time']
+
+
+
+
+
+
+# CLIENT CALL SENDER
+class CallRequest(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('ringing', 'Ringing'),
+        ('accepted', 'Accepted'),
+        ('rejected', 'Rejected'),
+        ('missed', 'Missed'),
+        ('expired', 'Expired'),
+        ('cancelled', 'Cancelled'),
+        ('connecting', 'Connecting'),
+        ('connected', 'Connected'),
+        ('ended', 'Ended'),
+        ('failed', 'Failed'),
+    ]
+    
+    CALL_TYPES = [
+        ('voice', 'Voice Call'),
+        ('video', 'Video Call'),
+    ]
+    
+    # Reference the ProfessionalProfile from accounts app
+    professional = models.ForeignKey(
+        AccountsProfessionalProfile,
+        on_delete=models.CASCADE,
+        related_name='dashboard_call_requests'
+    )
+    
+    # Client information
+    client_id = models.CharField(max_length=255, help_text="Client's unique ID")
+    client_name = models.CharField(max_length=255)
+    client_phone = models.CharField(max_length=20, blank=True, null=True)
+    
+    # Call details
+    call_type = models.CharField(max_length=20, choices=CALL_TYPES, default='video')
+    duration = models.PositiveIntegerField(default=30, help_text="Duration in minutes")
+    
+    # Consultation/payment info
+    consultation_id = models.CharField(max_length=255, blank=True, null=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    category = models.CharField(max_length=100, default='Consultation')
+    
+    # Status tracking
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    room_id = models.CharField(max_length=255, blank=True, null=True, help_text="Zego room ID for the call")
+    
+    # Timestamps
+    expires_at = models.DateTimeField(blank=True, null=True)
+    responded_at = models.DateTimeField(blank=True, null=True)
+    accepted_at = models.DateTimeField(blank=True, null=True)
+    rejected_at = models.DateTimeField(blank=True, null=True)
+    connected_at = models.DateTimeField(blank=True, null=True)
+    ended_at = models.DateTimeField(blank=True, null=True)
+    
+    rejection_reason = models.TextField(blank=True, null=True)
+    call_notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"Call Request #{self.id}: {self.client_name} to {self.professional.user.get_full_name()}"
+    
+    def save(self, *args, **kwargs):
+        # Set expiry time (60 seconds from creation)
+        if not self.expires_at and self.status == 'pending':
+            self.expires_at = timezone.now() + timezone.timedelta(seconds=60)
+        
+        # Set room_id if not set
+        if not self.room_id:
+            self.room_id = f"room_{self.professional.id}"
+        
+        super().save(*args, **kwargs)
+    
+    def is_expired(self):
+        if self.expires_at and timezone.now() > self.expires_at:
+            return True
+        return False
+    
+    @property
+    def is_active(self):
+        return self.status in ['accepted', 'connecting', 'connected']
+    
+    class Meta:
+        ordering = ['-created_at']
+
+
 # Alias for backward compatibility
 Notification = ProfessionalNotification
