@@ -7,6 +7,13 @@ from django.utils import timezone
 from datetime import timedelta, datetime
 import json
 
+# Add this line to your imports at the top:
+from .models import (
+    ProfessionalAvailability, ProfessionalStat,
+    IncomingCall, ProfessionalNotification, ProfessionalCalendar, CallHistory,
+    CallRequest  # <-- ADD THIS
+)
+
 # ============================================
 # UPDATED IMPORTS - Use accounts models
 # ============================================

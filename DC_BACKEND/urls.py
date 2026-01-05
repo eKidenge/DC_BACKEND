@@ -11,6 +11,7 @@ urlpatterns = [
     path('api/payments/', include('payments.urls')),
     #path('api/calls/', include('calls.urls')),
     path('api/dashboard/', include('dashboard.urls')),
+    path('api/call-requests/', include('dashboard.urls')),  # <-- add this line
     
     # API info at root
     path('', lambda request: JsonResponse({
