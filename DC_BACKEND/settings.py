@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'corsheaders',
     'channels',
+    'rest_framework_simplejwt',
     
     # Local apps
     'accounts',
@@ -48,6 +49,7 @@ INSTALLED_APPS = [
     'payments',
     'dashboard',
     'calls',
+    'admin_dashboard',  # Your new admin dashboard app
 ]
 
 MIDDLEWARE = [

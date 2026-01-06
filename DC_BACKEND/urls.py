@@ -12,6 +12,9 @@ urlpatterns = [
     path('api/payments/', include('payments.urls')),
     path('api/dashboard/', include('dashboard.urls')),  # dashboard app URLs
     
+    # ✅ ADD THIS LINE - Admin Dashboard API
+    path('api/admin/', include('admin_dashboard.urls')),
+    
     # Direct call-request endpoints at /api/call-requests/
     path('api/call-requests/create/', dashboard_views.create_call_request, name='create_call_request'),
     path('api/call-requests/<int:pk>/', dashboard_views.get_call_request, name='get_call_request'),
@@ -24,7 +27,8 @@ urlpatterns = [
         'app': 'Expert Consultation Platform',
         'api': 'http://localhost:8000/api/',
         'frontend': 'http://localhost:3000',
-        'admin': 'http://localhost:8000/admin/'
+        'admin': 'http://localhost:8000/admin/',
+        'admin_api': 'http://localhost:8000/api/admin/',  # ✅ Added admin API info
     })),
 ]
 

@@ -1,0 +1,642 @@
+from rest_framework import viewsets, status
+from rest_framework.decorators import action, permission_classes
+from rest_framework.permissions import IsAdminUser
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.db.models import Count, Sum, Q
+from django.utils import timezone
+from datetime import datetime, timedelta
+import json
+
+from accounts.models import User, ProfessionalProfile, ClientProfile
+from categories.models import ServiceCategory, ConsultationRequest  # ✅ Your model name
+# from payments.models import Transaction  # Remove if you don't have this
+from .models import AdminLog, PlatformSettings, Report
+from .serializers import (
+    UserSerializer, ProfessionalProfileSerializer, ClientProfileSerializer,
+    ConsultationSerializer, AdminLogSerializer, PlatformStatsSerializer,
+    ReportSerializer, ProfessionalVerificationSerializer, UserStatusSerializer
+)
+from .permissions import IsAdminOrReadOnly
+
+class AdminDashboardViewSet(viewsets.ViewSet):
+    permission_classes = [IsAdminUser]
+    
+    def list(self, request):
+        """Get platform statistics"""
+        today = timezone.now().date()
+        
+        # Calculate stats
+        total_users = User.objects.count()
+        total_professionals = User.objects.filter(role='professional').count()
+        total_clients = User.objects.filter(role='client').count()
+        
+        total_consultations = ConsultationRequest.objects.count()
+        
+        # Total revenue from completed consultations (YOUR model doesn't have payment_status)
+        total_revenue = ConsultationRequest.objects.filter(
+            status='completed'
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+        
+        # Active consultations (pending, matched, accepted, in_progress)
+        active_consultations = ConsultationRequest.objects.filter(
+            status__in=['pending', 'matched', 'accepted', 'in_progress']
+        ).count()
+        
+        # Today's stats
+        today_revenue = ConsultationRequest.objects.filter(
+            created_at__date=today,
+            status='completed'
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+        
+        today_consultations = ConsultationRequest.objects.filter(
+            created_at__date=today
+        ).count()
+        
+        # Pending verifications
+        pending_verifications = ProfessionalProfile.objects.filter(
+            is_verified=False
+        ).count()
+        
+        # Offline professionals
+        offline_professionals = ProfessionalProfile.objects.filter(
+            is_online=False
+        ).count()
+        
+        stats = {
+            'total_users': total_users,
+            'total_professionals': total_professionals,
+            'total_clients': total_clients,
+            'total_consultations': total_consultations,
+            'total_revenue': total_revenue,
+            'active_consultations': active_consultations,
+            'today_revenue': today_revenue,
+            'today_consultations': today_consultations,
+            'pending_verifications': pending_verifications,
+            'offline_professionals': offline_professionals
+        }
+        
+        serializer = PlatformStatsSerializer(stats)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def activity(self, request):
+        """Get recent admin activity"""
+        logs = AdminLog.objects.all()[:20]  # Last 20 activities
+        serializer = AdminLogSerializer(logs, many=True)
+        return Response(serializer.data)
+
+class ProfessionalViewSet(viewsets.ModelViewSet):
+    """Manage professionals (admin only)"""
+    permission_classes = [IsAdminUser]
+    queryset = ProfessionalProfile.objects.all().select_related('user')
+    serializer_class = ProfessionalProfileSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by verification status
+        verification = self.request.query_params.get('verification', None)
+        if verification == 'pending':
+            queryset = queryset.filter(is_verified=False)
+        elif verification == 'verified':
+            queryset = queryset.filter(is_verified=True)
+        
+        # Filter by online status
+        online = self.request.query_params.get('online', None)
+        if online == 'true':
+            queryset = queryset.filter(is_online=True)
+        elif online == 'false':
+            queryset = queryset.filter(is_online=False)
+        
+        # Search by name or email
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(user__username__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search)
+            )
+        
+        return queryset
+    
+    @action(detail=True, methods=['post'])
+    def verify(self, request, pk=None):
+        """Verify a professional"""
+        professional = self.get_object()
+        
+        # Check if already verified
+        if professional.is_verified:
+            return Response(
+                {'error': 'Professional is already verified'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        professional.is_verified = True
+        professional.save()
+        
+        # Log the action
+        AdminLog.objects.create(
+            admin=request.user,
+            action='professional_verified',
+            description=f'Verified professional: {professional.user.get_full_name()}',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({'status': 'verified'})
+    
+    @action(detail=True, methods=['patch'])
+    def toggle_active(self, request, pk=None):
+        """Toggle professional's active status"""
+        professional = self.get_object()
+        user = professional.user
+        
+        serializer = UserStatusSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        is_active = serializer.validated_data['is_active']
+        user.is_active = is_active
+        user.save()
+        
+        action = 'activated' if is_active else 'deactivated'
+        AdminLog.objects.create(
+            admin=request.user,
+            action='user_updated',
+            description=f'{action} professional: {user.get_full_name()}',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({'status': action})
+    
+    def get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+class ClientViewSet(viewsets.ModelViewSet):
+    """Manage clients (admin only)"""
+    permission_classes = [IsAdminUser]
+    queryset = ClientProfile.objects.all().select_related('user')
+    serializer_class = ClientProfileSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Search by name or email
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(user__username__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search)
+            )
+        
+        # Filter by activity
+        active = self.request.query_params.get('active', None)
+        if active == 'true':
+            queryset = queryset.filter(user__is_active=True)
+        elif active == 'false':
+            queryset = queryset.filter(user__is_active=False)
+        
+        return queryset
+    
+    @action(detail=True, methods=['patch'])
+    def toggle_active(self, request, pk=None):
+        """Toggle client's active status"""
+        client = self.get_object()
+        user = client.user
+        
+        serializer = UserStatusSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        is_active = serializer.validated_data['is_active']
+        user.is_active = is_active
+        user.save()
+        
+        action = 'activated' if is_active else 'deactivated'
+        AdminLog.objects.create(
+            admin=request.user,
+            action='user_updated',
+            description=f'{action} client: {user.get_full_name()}',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({'status': action})
+    
+    def get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+class ConsultationViewSet(viewsets.ModelViewSet):
+    """Manage consultations (admin only)"""
+    permission_classes = [IsAdminUser]
+    queryset = ConsultationRequest.objects.all().select_related('client', 'professional__user', 'category')
+    serializer_class = ConsultationSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by status
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        # Filter by date range
+        start_date = self.request.query_params.get('start_date', None)
+        end_date = self.request.query_params.get('end_date', None)
+        
+        if start_date:
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(created_at__date__gte=start_date)
+            except ValueError:
+                pass
+        
+        if end_date:
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(created_at__date__lte=end_date)
+            except ValueError:
+                pass
+        
+        # Search
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search) |
+                Q(description__icontains=search) |
+                Q(client__username__icontains=search) |
+                Q(client__first_name__icontains=search) |
+                Q(client__last_name__icontains=search)
+            )
+        
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def recent(self, request):
+        """Get recent consultations"""
+        consultations = self.get_queryset().order_by('-created_at')[:50]
+        serializer = self.get_serializer(consultations, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get consultation statistics"""
+        # Daily consultations for the last 7 days
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=6)
+        
+        daily_stats = []
+        for i in range(7):
+            date = start_date + timedelta(days=i)
+            count = ConsultationRequest.objects.filter(
+                created_at__date=date
+            ).count()
+            daily_stats.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'consultations': count
+            })
+        
+        # Revenue by category
+        revenue_by_category = []
+        categories = ServiceCategory.objects.all()
+        for category in categories:
+            revenue = ConsultationRequest.objects.filter(
+                category=category,
+                status='completed'
+            ).aggregate(total=Sum('total_amount'))['total'] or 0
+            
+            if revenue > 0:
+                revenue_by_category.append({
+                    'name': category.name,
+                    'revenue': revenue
+                })
+        
+        # Status distribution
+        status_distribution = ConsultationRequest.objects.values('status').annotate(
+            count=Count('id')
+        )
+        
+        return Response({
+            'daily_stats': daily_stats,
+            'revenue_by_category': revenue_by_category,
+            'status_distribution': status_distribution
+        })
+
+class ReportViewSet(viewsets.ModelViewSet):
+    """Manage reports (admin only)"""
+    permission_classes = [IsAdminUser]
+    queryset = Report.objects.all()
+    serializer_class = ReportSerializer
+    
+    @action(detail=False, methods=['post'])
+    def generate(self, request):
+        """Generate a new report"""
+        report_type = request.data.get('report_type')
+        period_start = request.data.get('period_start')
+        period_end = request.data.get('period_end')
+        name = request.data.get('name', f'{report_type} Report')
+        
+        try:
+            period_start = datetime.strptime(period_start, '%Y-%m-%d').date()
+            period_end = datetime.strptime(period_end, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid date format. Use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create report instance
+        report = Report.objects.create(
+            name=name,
+            report_type=report_type,
+            period_start=period_start,
+            period_end=period_end,
+            status='pending',
+            generated_by=request.user,
+            generated_at=timezone.now()
+        )
+        
+        # Generate report data based on type
+        try:
+            if report_type == 'revenue':
+                data = self._generate_revenue_report(period_start, period_end)
+            elif report_type == 'users':
+                data = self._generate_user_report(period_start, period_end)
+            elif report_type == 'consultations':
+                data = self._generate_consultation_report(period_start, period_end)
+            elif report_type == 'professionals':
+                data = self._generate_professional_report(period_start, period_end)
+            elif report_type == 'clients':
+                data = self._generate_client_report(period_start, period_end)
+            else:
+                raise ValueError(f'Unknown report type: {report_type}')
+            
+            report.data = data
+            report.status = 'generated'
+            report.save()
+            
+            # Log the action
+            AdminLog.objects.create(
+                admin=request.user,
+                action='system_settings_changed',
+                description=f'Generated report: {name}',
+                ip_address=self._get_client_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+            
+            return Response(ReportSerializer(report).data)
+            
+        except Exception as e:
+            report.status = 'failed'
+            report.save()
+            return Response(
+                {'error': f'Failed to generate report: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _generate_revenue_report(self, start_date, end_date):
+        # Get revenue data - YOUR model doesn't have payment_status
+        daily_revenue = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            revenue = ConsultationRequest.objects.filter(
+                created_at__date=current_date,
+                status='completed'
+            ).aggregate(total=Sum('total_amount'))['total'] or 0
+            
+            daily_revenue.append({
+                'date': current_date.strftime('%Y-%m-%d'),
+                'revenue': revenue
+            })
+            current_date += timedelta(days=1)
+        
+        # Get revenue by category
+        revenue_by_category = ConsultationRequest.objects.filter(
+            created_at__date__range=[start_date, end_date],
+            status='completed'
+        ).values('category__name').annotate(
+            revenue=Sum('total_amount'),
+            count=Count('id')
+        )
+        
+        return {
+            'period': {
+                'start': start_date.strftime('%Y-%m-%d'),
+                'end': end_date.strftime('%Y-%m-%d')
+            },
+            'daily_revenue': daily_revenue,
+            'revenue_by_category': list(revenue_by_category),
+            'total_revenue': sum(item['revenue'] for item in daily_revenue)
+        }
+    
+    def _generate_user_report(self, start_date, end_date):
+        # Get user growth data
+        daily_users = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            count = User.objects.filter(
+                date_joined__date=current_date
+            ).count()
+            
+            daily_users.append({
+                'date': current_date.strftime('%Y-%m-%d'),
+                'new_users': count
+            })
+            current_date += timedelta(days=1)
+        
+        # Get user type distribution
+        user_distribution = User.objects.filter(
+            date_joined__date__range=[start_date, end_date]
+        ).values('role').annotate(count=Count('id'))
+        
+        return {
+            'period': {
+                'start': start_date.strftime('%Y-%m-%d'),
+                'end': end_date.strftime('%Y-%m-%d')
+            },
+            'daily_users': daily_users,
+            'user_distribution': list(user_distribution),
+            'total_new_users': sum(item['new_users'] for item in daily_users)
+        }
+    
+    def _generate_consultation_report(self, start_date, end_date):
+        # Get consultation statistics
+        daily_consultations = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            count = ConsultationRequest.objects.filter(
+                created_at__date=current_date
+            ).count()
+            
+            daily_consultations.append({
+                'date': current_date.strftime('%Y-%m-%d'),
+                'consultations': count
+            })
+            current_date += timedelta(days=1)
+        
+        # Get status distribution
+        status_distribution = ConsultationRequest.objects.filter(
+            created_at__date__range=[start_date, end_date]
+        ).values('status').annotate(count=Count('id'))
+        
+        # Get average duration
+        avg_duration = ConsultationRequest.objects.filter(
+            created_at__date__range=[start_date, end_date],
+            duration_minutes__isnull=False
+        ).aggregate(avg=Avg('duration_minutes'))['avg'] or 0
+        
+        return {
+            'period': {
+                'start': start_date.strftime('%Y-%m-%d'),
+                'end': end_date.strftime('%Y-%m-%d')
+            },
+            'daily_consultations': daily_consultations,
+            'status_distribution': list(status_distribution),
+            'total_consultations': sum(item['consultations'] for item in daily_consultations),
+            'average_duration': avg_duration
+        }
+    
+    def _generate_professional_report(self, start_date, end_date):
+        # Get professional performance data
+        professionals = ProfessionalProfile.objects.filter(
+            user__date_joined__date__range=[start_date, end_date]
+        ).select_related('user')
+        
+        performance_data = []
+        for pro in professionals:
+            consultations = ConsultationRequest.objects.filter(
+                professional=pro,
+                created_at__date__range=[start_date, end_date]
+            )
+            
+            completed = consultations.filter(status='completed').count()
+            revenue = consultations.filter(
+                status='completed'
+            ).aggregate(total=Sum('professional_earnings'))['total'] or 0
+            
+            performance_data.append({
+                'id': pro.id,
+                'name': pro.user.get_full_name(),
+                'email': pro.user.email,
+                'hourly_rate': pro.hourly_rate,
+                'rating': pro.rating,
+                'total_consultations': consultations.count(),
+                'completed_consultations': completed,
+                'total_revenue': revenue,
+                'is_verified': pro.is_verified,
+                'is_online': pro.is_online
+            })
+        
+        return {
+            'period': {
+                'start': start_date.strftime('%Y-%m-%d'),
+                'end': end_date.strftime('%Y-%m-%d')
+            },
+            'professionals': performance_data,
+            'total_professionals': len(performance_data)
+        }
+    
+    def _generate_client_report(self, start_date, end_date):
+        # Get client retention data
+        clients = ClientProfile.objects.filter(
+            user__date_joined__date__range=[start_date, end_date]
+        ).select_related('user')
+        
+        client_data = []
+        for client in clients:
+            consultations = ConsultationRequest.objects.filter(
+                client=client.user,
+                created_at__date__range=[start_date, end_date]
+            )
+            
+            spent = consultations.filter(
+                status='completed'
+            ).aggregate(total=Sum('total_amount'))['total'] or 0
+            
+            client_data.append({
+                'id': client.id,
+                'name': client.user.get_full_name(),
+                'email': client.user.email,
+                'total_consultations': consultations.count(),
+                'total_spent': spent,
+                'last_consultation': consultations.order_by('-created_at').first().created_at if consultations.exists() else None
+            })
+        
+        # Calculate retention rate
+        active_clients = User.objects.filter(
+            role='client',
+            last_login__date__range=[start_date, end_date]
+        ).count()
+        
+        total_clients = User.objects.filter(role='client').count()
+        retention_rate = (active_clients / total_clients * 100) if total_clients > 0 else 0
+        
+        return {
+            'period': {
+                'start': start_date.strftime('%Y-%m-%d'),
+                'end': end_date.strftime('%Y-%m-%d')
+            },
+            'clients': client_data,
+            'active_clients': active_clients,
+            'total_clients': total_clients,
+            'retention_rate': retention_rate
+        }
+    
+    def _get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+class UserViewSet(viewsets.ModelViewSet):
+    """Manage all users (admin only)"""
+    permission_classes = [IsAdminUser]
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by role
+        role = self.request.query_params.get('role', None)
+        if role:
+            queryset = queryset.filter(role=role)
+        
+        # Filter by status
+        active = self.request.query_params.get('active', None)
+        if active == 'true':
+            queryset = queryset.filter(is_active=True)
+        elif active == 'false':
+            queryset = queryset.filter(is_active=False)
+        
+        # Search
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(username__icontains=search) |
+                Q(email__icontains=search) |
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search)
+            )
+        
+        return queryset
