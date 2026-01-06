@@ -205,9 +205,8 @@ class ConsultationRequest(models.Model):
         return f"Consultation #{self.id} - {self.client.get_full_name()}"
     
     def save(self, *args, **kwargs):
-        # Auto-calculate pricing if not set
-        if (self.total_amount in [0, None]) and self.duration_minutes and self.hourly_rate:
-        #if self.duration_minutes and self.hourly_rate:
+        # Auto-calculate pricing if not set#if (self.total_amount in [0, None]) and self.duration_minutes and self.hourly_rate:
+        if self.duration_minutes and self.hourly_rate:
             hours = self.duration_minutes / 60
             self.total_amount = hours * float(self.hourly_rate)
             
