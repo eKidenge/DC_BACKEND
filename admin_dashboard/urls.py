@@ -13,4 +13,6 @@ urlpatterns = [
     path('', include(router.urls)),
     path('dashboard/stats/', views.AdminDashboardViewSet.as_view({'get': 'list'}), name='admin-dashboard-stats'),
     path('dashboard/activity/', views.AdminDashboardViewSet.as_view({'get': 'activity'}), name='admin-dashboard-activity'),
+    # ADD THIS LINE:
+    path('consultations/recent/', views.ConsultationViewSet.as_view({'get': 'recent'}), name='admin-consultations-recent'),
 ]
