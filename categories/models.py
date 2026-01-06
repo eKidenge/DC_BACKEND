@@ -206,7 +206,8 @@ class ConsultationRequest(models.Model):
     
     def save(self, *args, **kwargs):
         # Auto-calculate pricing if not set
-        if self.duration_minutes and self.hourly_rate:
+        if (self.total_amount in [0, None]) and self.duration_minutes and self.hourly_rate:
+        #if self.duration_minutes and self.hourly_rate:
             hours = self.duration_minutes / 60
             self.total_amount = hours * float(self.hourly_rate)
             
