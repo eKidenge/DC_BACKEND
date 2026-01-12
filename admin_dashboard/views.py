@@ -3,21 +3,32 @@ from rest_framework.decorators import action, permission_classes
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db.models import Count, Sum, Q
+from django.db.models import Count, Sum, Q, Avg
 from django.utils import timezone
 from datetime import datetime, timedelta
 import json
+import csv
+from django.http import HttpResponse
+from django.contrib.auth.hashers import make_password
 
 from accounts.models import User, ProfessionalProfile, ClientProfile
-from categories.models import ServiceCategory, ConsultationRequest  # ✅ Your model name
-# from payments.models import Transaction  # Remove if you don't have this
+from categories.models import ServiceCategory, ConsultationRequest
 from .models import AdminLog, PlatformSettings, Report
 from .serializers import (
     UserSerializer, ProfessionalProfileSerializer, ClientProfileSerializer,
     ConsultationSerializer, AdminLogSerializer, PlatformStatsSerializer,
     ReportSerializer, ProfessionalVerificationSerializer, UserStatusSerializer
 )
-from .permissions import IsAdminOrReadOnly
+
+# Add this at the top with other classes
+class AdminMixin:
+    def get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
 
 class AdminDashboardViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminUser]
@@ -33,12 +44,12 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         
         total_consultations = ConsultationRequest.objects.count()
         
-        # Total revenue from completed consultations (YOUR model doesn't have payment_status)
+        # Total revenue from completed consultations
         total_revenue = ConsultationRequest.objects.filter(
             status='completed'
         ).aggregate(total=Sum('total_amount'))['total'] or 0
         
-        # Active consultations (pending, matched, accepted, in_progress)
+        # Active consultations
         active_consultations = ConsultationRequest.objects.filter(
             status__in=['pending', 'matched', 'accepted', 'in_progress']
         ).count()
@@ -82,11 +93,11 @@ class AdminDashboardViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def activity(self, request):
         """Get recent admin activity"""
-        logs = AdminLog.objects.all()[:20]  # Last 20 activities
+        logs = AdminLog.objects.all()[:20]
         serializer = AdminLogSerializer(logs, many=True)
         return Response(serializer.data)
 
-class ProfessionalViewSet(viewsets.ModelViewSet):
+class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
     """Manage professionals (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = ProfessionalProfile.objects.all().select_related('user')
@@ -95,21 +106,18 @@ class ProfessionalViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by verification status
         verification = self.request.query_params.get('verification', None)
         if verification == 'pending':
             queryset = queryset.filter(is_verified=False)
         elif verification == 'verified':
             queryset = queryset.filter(is_verified=True)
         
-        # Filter by online status
         online = self.request.query_params.get('online', None)
         if online == 'true':
             queryset = queryset.filter(is_online=True)
         elif online == 'false':
             queryset = queryset.filter(is_online=False)
         
-        # Search by name or email
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -121,12 +129,54 @@ class ProfessionalViewSet(viewsets.ModelViewSet):
         
         return queryset
     
+    def create(self, request):
+        """Create a new professional"""
+        try:
+            user_data = request.data.get('user', {})
+            professional_data = request.data.get('professional', {})
+            
+            if 'password' in user_data:
+                user_data['password'] = make_password(user_data['password'])
+            
+            user_data['role'] = 'professional'
+            user_data['is_active'] = True
+            
+            user_serializer = UserSerializer(data=user_data)
+            if not user_serializer.is_valid():
+                return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            user = user_serializer.save()
+            
+            professional_data['user'] = user.id
+            professional_serializer = self.get_serializer(data=professional_data)
+            
+            if professional_serializer.is_valid():
+                professional_serializer.save()
+                
+                AdminLog.objects.create(
+                    admin=request.user,
+                    action='user_created',
+                    description=f'Created professional: {user.get_full_name()}',
+                    ip_address=self.get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+                
+                return Response(professional_serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                user.delete()
+                return Response(professional_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @action(detail=True, methods=['post'])
     def verify(self, request, pk=None):
         """Verify a professional"""
         professional = self.get_object()
         
-        # Check if already verified
         if professional.is_verified:
             return Response(
                 {'error': 'Professional is already verified'},
@@ -136,7 +186,6 @@ class ProfessionalViewSet(viewsets.ModelViewSet):
         professional.is_verified = True
         professional.save()
         
-        # Log the action
         AdminLog.objects.create(
             admin=request.user,
             action='professional_verified',
@@ -171,16 +220,8 @@ class ProfessionalViewSet(viewsets.ModelViewSet):
         )
         
         return Response({'status': action})
-    
-    def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0]
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
 
-class ClientViewSet(viewsets.ModelViewSet):
+class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
     """Manage clients (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = ClientProfile.objects.all().select_related('user')
@@ -189,7 +230,6 @@ class ClientViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Search by name or email
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -199,7 +239,6 @@ class ClientViewSet(viewsets.ModelViewSet):
                 Q(user__last_name__icontains=search)
             )
         
-        # Filter by activity
         active = self.request.query_params.get('active', None)
         if active == 'true':
             queryset = queryset.filter(user__is_active=True)
@@ -207,6 +246,49 @@ class ClientViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(user__is_active=False)
         
         return queryset
+    
+    def create(self, request):
+        """Create a new client"""
+        try:
+            user_data = request.data.get('user', {})
+            client_data = request.data.get('client', {})
+            
+            if 'password' in user_data:
+                user_data['password'] = make_password(user_data['password'])
+            
+            user_data['role'] = 'client'
+            user_data['is_active'] = True
+            
+            user_serializer = UserSerializer(data=user_data)
+            if not user_serializer.is_valid():
+                return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            user = user_serializer.save()
+            
+            client_data['user'] = user.id
+            client_serializer = self.get_serializer(data=client_data)
+            
+            if client_serializer.is_valid():
+                client_serializer.save()
+                
+                AdminLog.objects.create(
+                    admin=request.user,
+                    action='user_created',
+                    description=f'Created client: {user.get_full_name()}',
+                    ip_address=self.get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+                
+                return Response(client_serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                user.delete()
+                return Response(client_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['patch'])
     def toggle_active(self, request, pk=None):
@@ -232,16 +314,8 @@ class ClientViewSet(viewsets.ModelViewSet):
         )
         
         return Response({'status': action})
-    
-    def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0]
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
 
-class ConsultationViewSet(viewsets.ModelViewSet):
+class ConsultationViewSet(viewsets.ModelViewSet, AdminMixin):
     """Manage consultations (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = ConsultationRequest.objects.all().select_related('client', 'professional__user', 'category')
@@ -250,12 +324,10 @@ class ConsultationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by status
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         
-        # Filter by date range
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         
@@ -273,7 +345,6 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             except ValueError:
                 pass
         
-        # Search
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -296,7 +367,6 @@ class ConsultationViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get consultation statistics"""
-        # Daily consultations for the last 7 days
         end_date = timezone.now().date()
         start_date = end_date - timedelta(days=6)
         
@@ -311,7 +381,6 @@ class ConsultationViewSet(viewsets.ModelViewSet):
                 'consultations': count
             })
         
-        # Revenue by category
         revenue_by_category = []
         categories = ServiceCategory.objects.all()
         for category in categories:
@@ -326,7 +395,6 @@ class ConsultationViewSet(viewsets.ModelViewSet):
                     'revenue': revenue
                 })
         
-        # Status distribution
         status_distribution = ConsultationRequest.objects.values('status').annotate(
             count=Count('id')
         )
@@ -336,8 +404,32 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             'revenue_by_category': revenue_by_category,
             'status_distribution': status_distribution
         })
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel a consultation"""
+        consultation = self.get_object()
+        
+        if consultation.status in ['completed', 'cancelled']:
+            return Response(
+                {'error': f'Consultation is already {consultation.status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        consultation.status = 'cancelled'
+        consultation.save()
+        
+        AdminLog.objects.create(
+            admin=request.user,
+            action='consultation_updated',
+            description=f'Cancelled consultation #{consultation.id}',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({'status': 'cancelled'})
 
-class ReportViewSet(viewsets.ModelViewSet):
+class ReportViewSet(viewsets.ModelViewSet, AdminMixin):
     """Manage reports (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = Report.objects.all()
@@ -350,6 +442,7 @@ class ReportViewSet(viewsets.ModelViewSet):
         period_start = request.data.get('period_start')
         period_end = request.data.get('period_end')
         name = request.data.get('name', f'{report_type} Report')
+        format_type = request.data.get('format', 'json')
         
         try:
             period_start = datetime.strptime(period_start, '%Y-%m-%d').date()
@@ -360,18 +453,16 @@ class ReportViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Create report instance
         report = Report.objects.create(
             name=name,
             report_type=report_type,
             period_start=period_start,
             period_end=period_end,
+            format=format_type,
             status='pending',
-            generated_by=request.user,
-            generated_at=timezone.now()
+            generated_by=request.user
         )
         
-        # Generate report data based on type
         try:
             if report_type == 'revenue':
                 data = self._generate_revenue_report(period_start, period_end)
@@ -388,14 +479,14 @@ class ReportViewSet(viewsets.ModelViewSet):
             
             report.data = data
             report.status = 'generated'
+            report.generated_at = timezone.now()
             report.save()
             
-            # Log the action
             AdminLog.objects.create(
                 admin=request.user,
-                action='system_settings_changed',
+                action='report_generated',
                 description=f'Generated report: {name}',
-                ip_address=self._get_client_ip(request),
+                ip_address=self.get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', '')
             )
             
@@ -403,14 +494,47 @@ class ReportViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             report.status = 'failed'
+            report.error_message = str(e)
             report.save()
             return Response(
                 {'error': f'Failed to generate report: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Download report in CSV format"""
+        report = self.get_object()
+        
+        if report.status != 'generated':
+            return Response(
+                {'error': 'Report not ready for download'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="{report.name}.csv"'
+        
+        writer = csv.writer(response)
+        
+        if report.report_type == 'revenue':
+            writer.writerow(['Date', 'Revenue'])
+            for item in report.data.get('daily_revenue', []):
+                writer.writerow([item['date'], item['revenue']])
+        
+        elif report.report_type == 'users':
+            writer.writerow(['Date', 'New Users'])
+            for item in report.data.get('daily_users', []):
+                writer.writerow([item['date'], item['new_users']])
+        
+        elif report.report_type == 'consultations':
+            writer.writerow(['Date', 'Consultations'])
+            for item in report.data.get('daily_consultations', []):
+                writer.writerow([item['date'], item['consultations']])
+        
+        return response
+    
     def _generate_revenue_report(self, start_date, end_date):
-        # Get revenue data - YOUR model doesn't have payment_status
         daily_revenue = []
         current_date = start_date
         
@@ -426,7 +550,6 @@ class ReportViewSet(viewsets.ModelViewSet):
             })
             current_date += timedelta(days=1)
         
-        # Get revenue by category
         revenue_by_category = ConsultationRequest.objects.filter(
             created_at__date__range=[start_date, end_date],
             status='completed'
@@ -446,7 +569,6 @@ class ReportViewSet(viewsets.ModelViewSet):
         }
     
     def _generate_user_report(self, start_date, end_date):
-        # Get user growth data
         daily_users = []
         current_date = start_date
         
@@ -461,7 +583,6 @@ class ReportViewSet(viewsets.ModelViewSet):
             })
             current_date += timedelta(days=1)
         
-        # Get user type distribution
         user_distribution = User.objects.filter(
             date_joined__date__range=[start_date, end_date]
         ).values('role').annotate(count=Count('id'))
@@ -477,7 +598,6 @@ class ReportViewSet(viewsets.ModelViewSet):
         }
     
     def _generate_consultation_report(self, start_date, end_date):
-        # Get consultation statistics
         daily_consultations = []
         current_date = start_date
         
@@ -492,12 +612,10 @@ class ReportViewSet(viewsets.ModelViewSet):
             })
             current_date += timedelta(days=1)
         
-        # Get status distribution
         status_distribution = ConsultationRequest.objects.filter(
             created_at__date__range=[start_date, end_date]
         ).values('status').annotate(count=Count('id'))
         
-        # Get average duration
         avg_duration = ConsultationRequest.objects.filter(
             created_at__date__range=[start_date, end_date],
             duration_minutes__isnull=False
@@ -515,7 +633,6 @@ class ReportViewSet(viewsets.ModelViewSet):
         }
     
     def _generate_professional_report(self, start_date, end_date):
-        # Get professional performance data
         professionals = ProfessionalProfile.objects.filter(
             user__date_joined__date__range=[start_date, end_date]
         ).select_related('user')
@@ -555,7 +672,6 @@ class ReportViewSet(viewsets.ModelViewSet):
         }
     
     def _generate_client_report(self, start_date, end_date):
-        # Get client retention data
         clients = ClientProfile.objects.filter(
             user__date_joined__date__range=[start_date, end_date]
         ).select_related('user')
@@ -580,7 +696,6 @@ class ReportViewSet(viewsets.ModelViewSet):
                 'last_consultation': consultations.order_by('-created_at').first().created_at if consultations.exists() else None
             })
         
-        # Calculate retention rate
         active_clients = User.objects.filter(
             role='client',
             last_login__date__range=[start_date, end_date]
@@ -599,16 +714,8 @@ class ReportViewSet(viewsets.ModelViewSet):
             'total_clients': total_clients,
             'retention_rate': retention_rate
         }
-    
-    def _get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0]
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
 
-class UserViewSet(viewsets.ModelViewSet):
+class UserViewSet(viewsets.ModelViewSet, AdminMixin):
     """Manage all users (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = User.objects.all()
@@ -617,19 +724,16 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by role
         role = self.request.query_params.get('role', None)
         if role:
             queryset = queryset.filter(role=role)
         
-        # Filter by status
         active = self.request.query_params.get('active', None)
         if active == 'true':
             queryset = queryset.filter(is_active=True)
         elif active == 'false':
             queryset = queryset.filter(is_active=False)
         
-        # Search
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -640,3 +744,27 @@ class UserViewSet(viewsets.ModelViewSet):
             )
         
         return queryset
+    
+    @action(detail=True, methods=['patch'])
+    def toggle_active(self, request, pk=None):
+        """Toggle user active status"""
+        user = self.get_object()
+        
+        serializer = UserStatusSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        is_active = serializer.validated_data['is_active']
+        user.is_active = is_active
+        user.save()
+        
+        action = 'activated' if is_active else 'deactivated'
+        AdminLog.objects.create(
+            admin=request.user,
+            action='user_updated',
+            description=f'{action} user: {user.get_full_name()}',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({'status': action})
