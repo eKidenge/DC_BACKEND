@@ -326,10 +326,8 @@ print("=" * 50)
 
 
 
-# ... all your existing settings above ...
-
 # =========================================================================
-# AUTO-CREATE ADMIN USER (TEMPORARY)
+# AUTO-CREATE ADMIN USER
 # =========================================================================
 import os
 from django.contrib.auth import get_user_model
@@ -338,12 +336,21 @@ if os.environ.get('RENDER'):
     try:
         User = get_user_model()
         if not User.objects.filter(username='admin').exists():
-            User.objects.create_superuser(
+            admin = User.objects.create_superuser(
                 username='admin',
                 email='admin@directconnect.com',
                 password='admin123'
             )
-            print("✓ Admin user created")
-    except:
-        pass
-# END OF FILE - nothing after this
+            print("=" * 50)
+            print("✅ ADMIN USER CREATED")
+            print(f"Username: admin")
+            print(f"Email: admin@directconnect.com")
+            print(f"Password: admin123")
+            print("=" * 50)
+        else:
+            print("✅ Admin user already exists")
+    except Exception as e:
+        print("=" * 50)
+        print("❌ FAILED TO CREATE ADMIN USER")
+        print(f"Error: {e}")
+        print("=" * 50)
