@@ -126,11 +126,11 @@ if DATABASE_URL and 'postgresql://' in DATABASE_URL:
             host, port = host_port.split(':')
         else:
             host = host_port
-            port = '5432'
+            port = '6543'
     else:
         # No port specified
         host, database = host_db.split('/')
-        port = '5432'
+        port = '6543'
     
     # Set up database configuration
     DATABASES = {
