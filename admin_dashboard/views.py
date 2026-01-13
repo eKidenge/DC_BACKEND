@@ -265,7 +265,7 @@ class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
             
             user = user_serializer.save()
             
-            client_data['user'] = user.id
+            client_data['user'] = user  # ← Send user instance, not ID
             client_serializer = self.get_serializer(data=client_data)
             
             if client_serializer.is_valid():
