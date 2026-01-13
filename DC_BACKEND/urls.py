@@ -3,8 +3,8 @@ from django.urls import path, include
 from django.http import JsonResponse
 from django.conf import settings
 from django.conf.urls.static import static
-from dashboard import views as dashboard_views
-from accounts.views import debug_db_status  # Add this import
+from dashboard import views as dashboard_views  
+from accounts.views import debug_db_status, detect_refresh, check_data_health, system_info  # Add this import
 
 urlpatterns = [
     path('admin/', admin.site.urls),
