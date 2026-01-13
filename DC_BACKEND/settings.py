@@ -84,13 +84,18 @@ WSGI_APPLICATION = 'DC_BACKEND.wsgi.application'
 ASGI_APPLICATION = 'DC_BACKEND.asgi.application'
 
 
+# Add at the TOP of settings.py
+import socket
+socket.getaddrinfo('db.tssyexupvlvtvvxdhhba.supabase.co', 5432)
+
+# Database config
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'postgres',
         'USER': 'postgres',
         'PASSWORD': 'DirectConnect2024!',
-        'HOST': 'tx.tssyexupvlvtvvxdhhba.supabase.co',
+        'HOST': 'db.tssyexupvlvtvvxdhhba.supabase.co',
         'PORT': 5432,
         'OPTIONS': {'sslmode': 'require'}
     }
