@@ -8,6 +8,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework import status
 from .models import User as CustomUser, ProfessionalProfile, ClientProfile
 from .serializers import UserSerializer, RegisterSerializer
+from django.conf import settings  # Add this import
 
 # ADD THIS IMPORT
 from categories.models import ServiceCategory
