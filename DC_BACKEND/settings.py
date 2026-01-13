@@ -85,23 +85,71 @@ ASGI_APPLICATION = 'DC_BACKEND.asgi.application'
 
 
 # Database Configuration
+import os
 
-# Use PostgreSQL if DATABASE_URL exists (on Render with Supabase)
-if os.environ.get('DATABASE_URL'):
-    import dj_database_url
-    db_config = dj_database_url.config(
-        default=os.environ.get('DATABASE_URL'),
-        conn_max_age=600,
-        ssl_require=True
-    )
-    # Force psycopg3 engine
-    db_config['ENGINE'] = 'django.db.backends.postgresql'
+# Get DATABASE_URL from environment
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+if DATABASE_URL and 'postgresql://' in DATABASE_URL:
+    # Manually parse the DATABASE_URL
+    # Format: postgresql://username:password@host:port/database
+    
+    # Remove 'postgresql://'
+    url = DATABASE_URL.replace('postgresql://', '')
+    
+    # Split into parts
+    if '@' in url:
+        # Has authentication
+        auth_host = url.split('@')
+        auth = auth_host[0]
+        host_db = auth_host[1]
+        
+        # Get username and password
+        if ':' in auth:
+            user_pass = auth.split(':')
+            username = user_pass[0]
+            password = ':'.join(user_pass[1:])  # Join in case password has special chars
+        else:
+            username = auth
+            password = ''
+    else:
+        # No authentication
+        host_db = url
+        username = 'postgres'
+        password = ''
+    
+    # Get host, port, and database
+    if ':' in host_db:
+        # Has port specified
+        host_port, database = host_db.split('/')
+        if ':' in host_port:
+            host, port = host_port.split(':')
+        else:
+            host = host_port
+            port = '5432'
+    else:
+        # No port specified
+        host, database = host_db.split('/')
+        port = '5432'
+    
+    # Set up database configuration
     DATABASES = {
-        'default': db_config
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': database,
+            'USER': username,
+            'PASSWORD': password,
+            'HOST': host,
+            'PORT': port,
+            'OPTIONS': {
+                'sslmode': 'require',
+            }
+        }
     }
-    print("✓ Using PostgreSQL (Supabase)")
+    print(f"✓ Connected to PostgreSQL: {host}:{port}/{database}")
+    
 else:
-    # Local development with SQLite
+    # Fallback to SQLite for local development
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
