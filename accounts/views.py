@@ -501,3 +501,52 @@ def check_data_health(request):
         'check_time': time.strftime('%Y-%m-%d %H:%M:%S'),
         'note': 'Check for: 1) Count drops, 2) Date resets, 3) ID gaps'
     })
+# =========================================================================
+# system_info - ADD THIS FUNCTION (it's missing!)
+# =========================================================================
+
+@csrf_exempt
+def system_info(request):
+    """Check system and database info - THIS WILL REVEAL THE PROBLEM"""
+    import os
+    import django
+    from django.db import connection
+    from django.conf import settings
+    
+    # Get database info
+    db_settings = connection.settings_dict
+    db_info = {
+        'engine': db_settings['ENGINE'],
+        'name': db_settings['NAME'],
+        'is_sqlite': 'sqlite' in db_settings['ENGINE'].lower()
+    }
+    
+    # Critical check: If using SQLite on Render
+    if db_info['is_sqlite']:
+        db_info['warning'] = '⚠️ SQLITE DETECTED - On Render free tier, SQLite resets on every deploy!'
+        db_info['file_exists'] = os.path.exists(db_settings['NAME'])
+        
+        if db_info['file_exists']:
+            size_bytes = os.path.getsize(db_settings['NAME'])
+            db_info['file_size'] = f"{size_bytes:,} bytes ({size_bytes/1024/1024:.2f} MB)"
+        else:
+            db_info['file_size'] = 'File not found - database is ephemeral'
+    
+    # Check environment
+    is_render = 'RENDER' in os.environ
+    is_production = not settings.DEBUG
+    
+    return JsonResponse({
+        'database': db_info,
+        'environment': {
+            'is_render': is_render,
+            'is_production': is_production,
+            'debug_mode': settings.DEBUG,
+            'service_type': os.environ.get('RENDER_SERVICE_TYPE', 'unknown')
+        },
+        'django_version': django.get_version(),
+        'current_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'timezone': settings.TIME_ZONE,
+        'diagnosis': 'If "is_sqlite" is true, your database resets on every deploy on Render free tier.',
+        'solution': 'Switch to PostgreSQL add-on in Render dashboard'
+    })
