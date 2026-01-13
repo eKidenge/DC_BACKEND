@@ -85,25 +85,29 @@ WSGI_APPLICATION = 'DC_BACKEND.wsgi.application'
 ASGI_APPLICATION = 'DC_BACKEND.asgi.application'
 
 
-# Database
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
+# Database Configuration
+import os
 
-# For production, use PostgreSQL:
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'dc_db',
-#         'USER': 'postgres',
-#         'PASSWORD': 'password',
-#         'HOST': 'localhost',
-#         'PORT': '5432',
-#     }
-# }
+# Use PostgreSQL if DATABASE_URL exists (on Render with Supabase)
+if os.environ.get('DATABASE_URL'):
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=os.environ.get('DATABASE_URL'),
+            conn_max_age=600,
+            ssl_require=True
+        )
+    }
+    print("✓ Using PostgreSQL (Supabase)")
+else:
+    # Local development with SQLite
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+    print("✓ Using SQLite for local development")
 
 # Redis for WebSockets (optional, comment out if not using)
 CHANNEL_LAYERS = {
