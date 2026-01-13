@@ -147,24 +147,26 @@ class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
             
             user = user_serializer.save()
             
-            professional_data['user'] = user  # Send user instance, not ID
-            professional_serializer = self.get_serializer(data=professional_data)
-            
-            if professional_serializer.is_valid():
-                professional_serializer.save()
-                
-                AdminLog.objects.create(
-                    admin=request.user,
-                    action='user_created',
-                    description=f'Created professional: {user.get_full_name()}',
-                    ip_address=self.get_client_ip(request),
-                    user_agent=request.META.get('HTTP_USER_AGENT', '')
-                )
-                
-                return Response(professional_serializer.data, status=status.HTTP_201_CREATED)
-            else:
-                user.delete()
-                return Response(professional_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            professional_profile = ProfessionalProfile.objects.create(
+                user=user,
+                hourly_rate=professional_data.get('hourly_rate', 0),
+                experience_years=professional_data.get('experience_years', 0),
+                bio=professional_data.get('bio', ''),
+                languages=professional_data.get('languages', ''),
+                license_number=professional_data.get('license_number', ''),
+                is_verified=False
+            )
+
+            AdminLog.objects.create(
+                admin=request.user,
+                action='user_created',
+                description=f'Created professional: {user.get_full_name()}',
+                ip_address=self.get_client_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+
+            serializer = self.get_serializer(professional_profile)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
             return Response(
@@ -226,7 +228,6 @@ class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
     permission_classes = [IsAdminUser]
     queryset = ClientProfile.objects.all().select_related('user')
     serializer_class = ClientProfileSerializer
-    #serializer_class = ClientCreateSerializer
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -266,24 +267,22 @@ class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
             
             user = user_serializer.save()
             
-            client_data['user'] = user  # ← Send user instance, not ID
-            client_serializer = self.get_serializer(data=client_data)
-            
-            if client_serializer.is_valid():
-                client_serializer.save()
-                
-                AdminLog.objects.create(
-                    admin=request.user,
-                    action='user_created',
-                    description=f'Created client: {user.get_full_name()}',
-                    ip_address=self.get_client_ip(request),
-                    user_agent=request.META.get('HTTP_USER_AGENT', '')
-                )
-                
-                return Response(client_serializer.data, status=status.HTTP_201_CREATED)
-            else:
-                user.delete()
-                return Response(client_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            client_profile = ClientProfile.objects.create(
+                user=user,
+                date_of_birth=client_data.get('date_of_birth'),
+                preferences=client_data.get('preferences', {})
+            )
+
+            AdminLog.objects.create(
+                admin=request.user,
+                action='user_created',
+                description=f'Created client: {user.get_full_name()}',
+                ip_address=self.get_client_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+
+            serializer = self.get_serializer(client_profile)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
             return Response(
@@ -769,4 +768,3 @@ class UserViewSet(viewsets.ModelViewSet, AdminMixin):
         )
         
         return Response({'status': action})
-        #admin dashboard/views.py
