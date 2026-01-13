@@ -208,59 +208,145 @@ class ServiceCategoriesView(APIView):
 
 
 # ADDED TO MONITOR DB JAN 13TH
-# Add to accounts/views.py
+# Replace your existing debug_db_status function with this enhanced version
 import time
 import json
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.apps import apps
+from django.db import connection
 
-# Global storage for snapshots
-_db_snapshots = []
-_max_snapshots = 5
+# Global storage with persistent tracking across deploys
+_db_history = []
+_MAX_HISTORY = 50
+_last_check_time = None
 
 @csrf_exempt
 def debug_db_status(request):
-    """Simple endpoint to monitor database state"""
-    if request.method != 'GET':
-        return JsonResponse({'error': 'Only GET method allowed'})
+    """Enhanced debug endpoint to monitor database state"""
+    global _last_check_time
+    
+    # Get action from query params
+    action = request.GET.get('action', '')
+    
+    if action == 'reset':
+        _db_history.clear()
+        return JsonResponse({'status': 'history cleared'})
+    
+    if action == 'full':
+        # Return detailed info about each model
+        return get_full_diagnostic()
     
     # Get current counts for all models
     models = apps.get_models()
     current_state = {}
+    current_time = time.time()
     
+    # Track time since last check
+    time_since_last = None
+    if _last_check_time:
+        time_since_last = current_time - _last_check_time
+    _last_check_time = current_time
+    
+    # Get detailed counts
     for model in models:
         try:
-            current_state[model.__name__] = model.objects.count()
-        except:
-            current_state[model.__name__] = 'ERROR'
+            count = model.objects.count()
+            current_state[model.__name__] = count
+            
+            # For models that have data, check the latest record
+            if count > 0:
+                try:
+                    latest = model.objects.order_by('-id').first()
+                    if latest and hasattr(latest, 'created_at'):
+                        current_state[f"{model.__name__}_latest"] = str(latest.created_at)
+                except:
+                    pass
+                    
+        except Exception as e:
+            current_state[model.__name__] = f'ERROR: {str(e)}'
     
-    # Store snapshot
+    # Check SQL queries executed
+    queries = []
+    if len(connection.queries) > 0:
+        queries = [q['sql'][:100] for q in connection.queries[-10:]]
+    
+    # Store in history
     snapshot = {
         'timestamp': time.strftime('%H:%M:%S'),
-        'state': current_state
+        'unix_time': current_time,
+        'state': current_state,
+        'queries': queries[:3]  # Store last 3 queries
     }
     
-    _db_snapshots.append(snapshot)
-    if len(_db_snapshots) > _max_snapshots:
-        _db_snapshots.pop(0)
+    _db_history.append(snapshot)
+    if len(_db_history) > _MAX_HISTORY:
+        _db_history.pop(0)
     
-    # Check if anything changed from previous snapshot
-    changed = []
-    if len(_db_snapshots) > 1:
-        prev = _db_snapshots[-2]['state']
-        for model_name, count in current_state.items():
-            if model_name in prev and prev[model_name] != count:
-                changed.append({
-                    'model': model_name,
-                    'from': prev[model_name],
-                    'to': count
-                })
+    # Find changes since ANY previous snapshot (not just last one)
+    all_changes = []
+    if len(_db_history) > 1:
+        # Compare with all previous snapshots
+        for i in range(len(_db_history) - 1):
+            prev = _db_history[i]['state']
+            for model_name, count in current_state.items():
+                if not model_name.endswith('_latest') and model_name in prev:
+                    prev_count = prev[model_name]
+                    if isinstance(prev_count, int) and isinstance(count, int):
+                        if prev_count != count:
+                            change_found = {
+                                'model': model_name,
+                                'from': prev_count,
+                                'to': count,
+                                'when': _db_history[i]['timestamp'],
+                                'ago': f"{len(_db_history) - 1 - i} checks ago"
+                            }
+                            # Only add if not already recorded
+                            if not any(c['model'] == model_name and c['from'] == prev_count and c['to'] == count 
+                                     for c in all_changes):
+                                all_changes.append(change_found)
     
     return JsonResponse({
         'current_time': time.strftime('%Y-%m-%d %H:%M:%S'),
-        'current_counts': current_state,
-        'changed_since_last_check': changed,
-        'recent_snapshots': _db_snapshots,
-        'total_models': len(models)
+        'time_since_last_check': f"{time_since_last:.1f}s" if time_since_last else 'first check',
+        'current_counts': {k: v for k, v in current_state.items() if not k.endswith('_latest')},
+        'all_changes_detected': all_changes,
+        'recent_queries': queries[:5],
+        'history_size': len(_db_history),
+        'check_count': len(_db_history)
+    })
+
+def get_full_diagnostic():
+    """Return detailed diagnostic info"""
+    models = apps.get_models()
+    detailed_info = []
+    
+    for model in models:
+        try:
+            count = model.objects.count()
+            info = {
+                'model': model.__name__,
+                'count': count,
+                'app': model._meta.app_label,
+                'table': model._meta.db_table,
+            }
+            
+            if count > 0:
+                # Get sample of recent records
+                try:
+                    recent = list(model.objects.order_by('-id')[:3].values('id', 'created_at'))
+                    info['recent'] = recent
+                except:
+                    info['recent'] = 'N/A'
+            
+            detailed_info.append(info)
+        except Exception as e:
+            detailed_info.append({
+                'model': model.__name__,
+                'error': str(e)
+            })
+    
+    return JsonResponse({
+        'detailed_models': detailed_info,
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
     })
