@@ -147,7 +147,7 @@ class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
             
             user = user_serializer.save()
             
-            professional_data['user'] = user.id
+            professional_data['user'] = user  # Send user instance, not ID
             professional_serializer = self.get_serializer(data=professional_data)
             
             if professional_serializer.is_valid():
