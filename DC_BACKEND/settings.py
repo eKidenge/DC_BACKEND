@@ -84,79 +84,17 @@ WSGI_APPLICATION = 'DC_BACKEND.wsgi.application'
 ASGI_APPLICATION = 'DC_BACKEND.asgi.application'
 
 
-# Database Configuration
-import os
-
-# Get DATABASE_URL from environment
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
-if DATABASE_URL and 'postgresql://' in DATABASE_URL:
-    # Manually parse the DATABASE_URL
-    # Format: postgresql://username:password@host:port/database
-    
-    # Remove 'postgresql://'
-    url = DATABASE_URL.replace('postgresql://', '')
-    
-    # Split into parts
-    if '@' in url:
-        # Has authentication
-        auth_host = url.split('@')
-        auth = auth_host[0]
-        host_db = auth_host[1]
-        
-        # Get username and password
-        if ':' in auth:
-            user_pass = auth.split(':')
-            username = user_pass[0]
-            password = ':'.join(user_pass[1:])  # Join in case password has special chars
-        else:
-            username = auth
-            password = ''
-    else:
-        # No authentication
-        host_db = url
-        username = 'postgres'
-        password = ''
-    
-    # Get host, port, and database
-    if ':' in host_db:
-        # Has port specified
-        host_port, database = host_db.split('/')
-        if ':' in host_port:
-            host, port = host_port.split(':')
-        else:
-            host = host_port
-            port = '6543'
-    else:
-        # No port specified
-        host, database = host_db.split('/')
-        port = '6543'
-    
-    # Set up database configuration
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': database,
-            'USER': username,
-            'PASSWORD': password,
-            'HOST': host,
-            'PORT': port,
-            'OPTIONS': {
-                'sslmode': 'require',
-            }
-        }
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'postgres',
+        'USER': 'postgres',
+        'PASSWORD': 'DirectConnect2024!',
+        'HOST': 'aws-0-us-east-1.pooler.supabase.co',
+        'PORT': 6543,
+        'OPTIONS': {'sslmode': 'require'}
     }
-    print(f"✓ Connected to PostgreSQL: {host}:{port}/{database}")
-    
-else:
-    # Fallback to SQLite for local development
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
-    print("✓ Using SQLite for local development")
+}
 
 # Redis for WebSockets (optional, comment out if not using)
 CHANNEL_LAYERS = {
