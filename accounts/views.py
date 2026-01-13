@@ -350,3 +350,153 @@ def get_full_diagnostic():
         'detailed_models': detailed_info,
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
     })
+
+
+# MORE TARGETED DEBUG
+# Add this new view to accounts/views.py
+import time
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.apps import apps
+import json
+
+# Persistent storage that survives between requests
+_important_models = ['User', 'ConsultationRequest', 'MpesaTransaction', 'MpesaPaymentRequest']
+_refresh_history = []
+
+@csrf_exempt
+def detect_refresh(request):
+    """Specifically track if database is being reset"""
+    action = request.GET.get('action', '')
+    
+    if action == 'clear':
+        _refresh_history.clear()
+        return JsonResponse({'status': 'history cleared'})
+    
+    # Track key models
+    current_counts = {}
+    for model_name in _important_models:
+        try:
+            model = apps.get_model(model_name.split('.')[-1]) if '.' in model_name else apps.get_model('*', model_name)
+            current_counts[model_name] = model.objects.count()
+        except:
+            current_counts[model_name] = None
+    
+    # Check if this looks like a refresh (counts dropped significantly)
+    is_refresh = False
+    refresh_details = {}
+    
+    if _refresh_history:
+        last_counts = _refresh_history[-1]['counts']
+        for model_name, current_count in current_counts.items():
+            if model_name in last_counts and last_counts[model_name] is not None:
+                last_count = last_counts[model_name]
+                if current_count < last_count * 0.5:  # Lost more than 50%
+                    is_refresh = True
+                    refresh_details[model_name] = {
+                        'from': last_count,
+                        'to': current_count,
+                        'lost': last_count - current_count
+                    }
+    
+    # Record this check
+    check_record = {
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'unix_time': time.time(),
+        'counts': current_counts,
+        'is_refresh': is_refresh,
+        'refresh_details': refresh_details,
+        'source_ip': request.META.get('REMOTE_ADDR', 'unknown')
+    }
+    
+    _refresh_history.append(check_record)
+    
+    # Keep only last 100 records
+    if len(_refresh_history) > 100:
+        _refresh_history.pop(0)
+    
+    # Calculate stats
+    if len(_refresh_history) > 1:
+        first = _refresh_history[0]
+        last = _refresh_history[-1]
+        time_span = last['unix_time'] - first['unix_time']
+        checks_per_hour = len(_refresh_history) / (time_span / 3600) if time_span > 0 else 0
+    else:
+        checks_per_hour = 0
+    
+    # Check for any resets in history
+    total_refreshes = sum(1 for r in _refresh_history if r['is_refresh'])
+    
+    return JsonResponse({
+        'current': check_record,
+        'summary': {
+            'total_checks': len(_refresh_history),
+            'total_refreshes_detected': total_refreshes,
+            'checks_per_hour': f"{checks_per_hour:.1f}",
+            'monitoring_since': _refresh_history[0]['timestamp'] if _refresh_history else 'just started'
+        },
+        'recent_history': _refresh_history[-5:],  # Last 5 checks
+        'all_refreshes': [r for r in _refresh_history if r['is_refresh']]
+    })
+
+@csrf_exempt  
+def check_data_health(request):
+    """Check if data looks consistent (not being truncated)"""
+    models_to_check = [
+        'accounts.User',
+        'categories.ConsultationRequest', 
+        'payments.MpesaTransaction',
+        'payments.MpesaPaymentRequest'
+    ]
+    
+    results = []
+    
+    for model_path in models_to_check:
+        try:
+            app_label, model_name = model_path.split('.')
+            model = apps.get_model(app_label, model_name)
+            
+            total = model.objects.count()
+            
+            # Check date range
+            if hasattr(model, 'created_at'):
+                dates = model.objects.aggregate(
+                    oldest=models.Min('created_at'),
+                    newest=models.Max('created_at')
+                )
+                date_info = dates
+            else:
+                date_info = {'oldest': 'N/A', 'newest': 'N/A'}
+            
+            # Check IDs are sequential (not reset)
+            if total > 0:
+                ids = list(model.objects.order_by('id').values_list('id', flat=True)[:100])
+                min_id = min(ids)
+                max_id = max(ids)
+                gap_ratio = (max_id - min_id + 1) / total if total > 0 else 1
+                has_gaps = gap_ratio > 1.2  # More than 20% gaps suggests deletions
+            else:
+                has_gaps = False
+                min_id = max_id = 0
+            
+            results.append({
+                'model': model_name,
+                'count': total,
+                'date_range': date_info,
+                'id_range': f"{min_id}-{max_id}",
+                'has_id_gaps': has_gaps,
+                'health': 'GOOD' if total > 0 and not has_gaps else 'SUSPICIOUS'
+            })
+            
+        except Exception as e:
+            results.append({
+                'model': model_path,
+                'error': str(e),
+                'health': 'ERROR'
+            })
+    
+    return JsonResponse({
+        'data_health_check': results,
+        'check_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'note': 'Check for: 1) Count drops, 2) Date resets, 3) ID gaps'
+    })
