@@ -225,8 +225,8 @@ class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
     """Manage clients (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = ClientProfile.objects.all().select_related('user')
-    #serializer_class = ClientProfileSerializer
-    serializer_class = ClientCreateSerializer
+    serializer_class = ClientProfileSerializer
+    #serializer_class = ClientCreateSerializer
     
     def get_queryset(self):
         queryset = super().get_queryset()
