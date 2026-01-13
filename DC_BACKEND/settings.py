@@ -89,18 +89,18 @@ import socket
 socket.getaddrinfo('db.tssyexupvlvtvvxdhhba.supabase.co', 5432)
 
 # Database config
+# Database config - Render PostgreSQL
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'postgres',
-        'USER': 'postgres',
-        'PASSWORD': 'DirectConnect2024!',
-        'HOST': 'db.tssyexupvlvtvvxdhhba.supabase.co',
+        'NAME': 'dc_website',
+        'USER': 'dc_website_user',
+        'PASSWORD': 'f2Y0bOytWxxoh1l5N5LztDyoapi9ZejQ',
+        'HOST': 'dpg-d5j7nnffte5s73d7olj0-a.oregon-postgres.render.com',
         'PORT': 5432,
         'OPTIONS': {'sslmode': 'require'}
     }
 }
-
 # Redis for WebSockets (optional, comment out if not using)
 CHANNEL_LAYERS = {
     'default': {
