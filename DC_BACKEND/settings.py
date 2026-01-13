@@ -323,34 +323,3 @@ print(f"Passkey: {'✓ SET' if MPESA_PASSKEY else '✗ EMPTY'}")
 print(f"Callback URL: {MPESA_CALLBACK_URL}")
 print(f"Base URL: {BASE_URL}")
 print("=" * 50)
-
-
-
-# =========================================================================
-# AUTO-CREATE ADMIN USER
-# =========================================================================
-import os
-from django.contrib.auth import get_user_model
-
-if os.environ.get('RENDER'):
-    try:
-        User = get_user_model()
-        if not User.objects.filter(username='admin').exists():
-            admin = User.objects.create_superuser(
-                username='admin',
-                email='admin@directconnect.com',
-                password='admin123'
-            )
-            print("=" * 50)
-            print("✅ ADMIN USER CREATED")
-            print(f"Username: admin")
-            print(f"Email: admin@directconnect.com")
-            print(f"Password: admin123")
-            print("=" * 50)
-        else:
-            print("✅ Admin user already exists")
-    except Exception as e:
-        print("=" * 50)
-        print("❌ FAILED TO CREATE ADMIN USER")
-        print(f"Error: {e}")
-        print("=" * 50)
