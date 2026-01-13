@@ -90,8 +90,8 @@ DATABASES = {
         'NAME': 'postgres',
         'USER': 'postgres',
         'PASSWORD': 'DirectConnect2024!',
-        'HOST': 'aws-0-us-east-1.pooler.supabase.co',
-        'PORT': 6543,
+        'HOST': 'tx.tssyexupvlvtvvxdhhba.supabase.co',
+        'PORT': 5432,
         'OPTIONS': {'sslmode': 'require'}
     }
 }
