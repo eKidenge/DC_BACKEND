@@ -5,6 +5,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from dashboard import views as dashboard_views  
 from accounts.views import debug_db_status, detect_refresh, check_data_health #system_info  # Add this import
+from accounts import views  # Import the views module, not individual functions
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -26,7 +27,9 @@ urlpatterns = [
     # Add these to your urlpatterns
     path('debug/detect-refresh/', detect_refresh, name='detect_refresh'),
     path('debug/data-health/', check_data_health, name='data_health'),
-    path('debug/system-info/', system_info, name='system_info'),
+    #path('debug/system-info/', system_info, name='system_info'),
+    path('debug/system-info/', views.system_info, name='system_info'),
+
     
     # API info at root
     path('', lambda request: JsonResponse({
