@@ -23,6 +23,9 @@ urlpatterns = [
     path('api/call-requests/<int:pk>/cancel/', dashboard_views.cancel_call_request, name='cancel_call_request'),
     path('api/call-requests/pending/', dashboard_views.professional_pending_calls, name='professional_pending_calls'),
     path('debug/db/', debug_db_status, name='debug_db'),  # Add this line
+    # Add these to your urlpatterns
+    path('debug/detect-refresh/', detect_refresh, name='detect_refresh'),
+    path('debug/data-health/', check_data_health, name='data_health'),
     
     # API info at root
     path('', lambda request: JsonResponse({
