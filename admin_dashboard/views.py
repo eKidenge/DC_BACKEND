@@ -15,7 +15,7 @@ from accounts.models import User, ProfessionalProfile, ClientProfile
 from categories.models import ServiceCategory, ConsultationRequest
 from .models import AdminLog, PlatformSettings, Report
 from .serializers import (
-    UserSerializer, ProfessionalProfileSerializer, ClientProfileSerializer,ClientCreateSerializer,  # Add this
+    UserSerializer, ProfessionalProfileSerializer, ClientProfileSerializer,
     ConsultationSerializer, AdminLogSerializer, PlatformStatsSerializer,
     ReportSerializer, ProfessionalVerificationSerializer, UserStatusSerializer
 )
