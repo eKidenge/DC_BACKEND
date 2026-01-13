@@ -513,40 +513,51 @@ def system_info(request):
     from django.db import connection
     from django.conf import settings
     
-    # Get database info
+    # Get database info - convert Path to string
     db_settings = connection.settings_dict
+    db_name = str(db_settings['NAME'])  # Convert PosixPath to string
+    
     db_info = {
         'engine': db_settings['ENGINE'],
-        'name': db_settings['NAME'],
+        'name': db_name,  # Use string version
+        'raw_name': str(db_settings['NAME']),  # Also show as string
         'is_sqlite': 'sqlite' in db_settings['ENGINE'].lower()
     }
     
     # Critical check: If using SQLite on Render
     if db_info['is_sqlite']:
         db_info['warning'] = '⚠️ SQLITE DETECTED - On Render free tier, SQLite resets on every deploy!'
-        db_info['file_exists'] = os.path.exists(db_settings['NAME'])
         
-        if db_info['file_exists']:
-            size_bytes = os.path.getsize(db_settings['NAME'])
+        # Check if file exists
+        file_exists = os.path.exists(db_name)
+        db_info['file_exists'] = file_exists
+        
+        if file_exists:
+            size_bytes = os.path.getsize(db_name)
             db_info['file_size'] = f"{size_bytes:,} bytes ({size_bytes/1024/1024:.2f} MB)"
+            
+            # Check file modification time
+            mod_time = os.path.getmtime(db_name)
+            db_info['last_modified'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mod_time))
+            db_info['seconds_since_mod'] = int(time.time() - mod_time)
         else:
             db_info['file_size'] = 'File not found - database is ephemeral'
+            db_info['note'] = 'SQLite file gets recreated on each deploy on Render free tier'
     
     # Check environment
     is_render = 'RENDER' in os.environ
-    is_production = not settings.DEBUG
     
     return JsonResponse({
         'database': db_info,
         'environment': {
             'is_render': is_render,
-            'is_production': is_production,
             'debug_mode': settings.DEBUG,
-            'service_type': os.environ.get('RENDER_SERVICE_TYPE', 'unknown')
+            'service_type': os.environ.get('RENDER_SERVICE_TYPE', 'unknown'),
+            'deploy_id': os.environ.get('RENDER_GIT_COMMIT', 'unknown')[:8] if 'RENDER_GIT_COMMIT' in os.environ else 'unknown'
         },
         'django_version': django.get_version(),
-        'current_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'current_time': time.strftime('%Y-%m-%d %H:%M:%S UTC'),
         'timezone': settings.TIME_ZONE,
-        'diagnosis': 'If "is_sqlite" is true, your database resets on every deploy on Render free tier.',
-        'solution': 'Switch to PostgreSQL add-on in Render dashboard'
+        'diagnosis': 'If "is_sqlite" is true AND "seconds_since_mod" is low, database is resetting on deploys',
+        'solution': '1) Use PostgreSQL add-on OR 2) Switch to a different hosting with persistent storage'
     })
