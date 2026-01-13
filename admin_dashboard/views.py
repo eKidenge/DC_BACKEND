@@ -16,11 +16,11 @@ from categories.models import ServiceCategory, ConsultationRequest
 from .models import AdminLog, PlatformSettings, Report
 from .serializers import (
     UserSerializer, ProfessionalProfileSerializer, ClientProfileSerializer,
-    ConsultationSerializer, AdminLogSerializer, PlatformStatsSerializer,
-    ReportSerializer, ProfessionalVerificationSerializer, UserStatusSerializer
+    ClientCreateSerializer, ConsultationSerializer, AdminLogSerializer, 
+    PlatformStatsSerializer, ReportSerializer, ProfessionalVerificationSerializer, 
+    UserStatusSerializer
 )
 
-# Add this at the top with other classes
 class AdminMixin:
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
@@ -34,27 +34,21 @@ class AdminDashboardViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminUser]
     
     def list(self, request):
-        """Get platform statistics"""
         today = timezone.now().date()
         
-        # Calculate stats
         total_users = User.objects.count()
         total_professionals = User.objects.filter(role='professional').count()
         total_clients = User.objects.filter(role='client').count()
-        
         total_consultations = ConsultationRequest.objects.count()
         
-        # Total revenue from completed consultations
         total_revenue = ConsultationRequest.objects.filter(
             status='completed'
         ).aggregate(total=Sum('total_amount'))['total'] or 0
         
-        # Active consultations
         active_consultations = ConsultationRequest.objects.filter(
             status__in=['pending', 'matched', 'accepted', 'in_progress']
         ).count()
         
-        # Today's stats
         today_revenue = ConsultationRequest.objects.filter(
             created_at__date=today,
             status='completed'
@@ -64,12 +58,10 @@ class AdminDashboardViewSet(viewsets.ViewSet):
             created_at__date=today
         ).count()
         
-        # Pending verifications
         pending_verifications = ProfessionalProfile.objects.filter(
             is_verified=False
         ).count()
         
-        # Offline professionals
         offline_professionals = ProfessionalProfile.objects.filter(
             is_online=False
         ).count()
@@ -92,13 +84,11 @@ class AdminDashboardViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def activity(self, request):
-        """Get recent admin activity"""
         logs = AdminLog.objects.all()[:20]
         serializer = AdminLogSerializer(logs, many=True)
         return Response(serializer.data)
 
 class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
-    """Manage professionals (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = ProfessionalProfile.objects.all().select_related('user')
     serializer_class = ProfessionalProfileSerializer
@@ -130,7 +120,6 @@ class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
         return queryset
     
     def create(self, request):
-        """Create a new professional"""
         try:
             user_data = request.data.get('user', {})
             professional_data = request.data.get('professional', {})
@@ -147,7 +136,7 @@ class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
             
             user = user_serializer.save()
             
-            professional_data['user'] = user  # Send user instance, not ID
+            professional_data['user'] = user
             professional_serializer = self.get_serializer(data=professional_data)
             
             if professional_serializer.is_valid():
@@ -167,14 +156,10 @@ class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
                 return Response(professional_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
                 
         except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['post'])
     def verify(self, request, pk=None):
-        """Verify a professional"""
         professional = self.get_object()
         
         if professional.is_verified:
@@ -198,7 +183,6 @@ class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
     
     @action(detail=True, methods=['patch'])
     def toggle_active(self, request, pk=None):
-        """Toggle professional's active status"""
         professional = self.get_object()
         user = professional.user
         
@@ -222,10 +206,8 @@ class ProfessionalViewSet(viewsets.ModelViewSet, AdminMixin):
         return Response({'status': action})
 
 class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
-    """Manage clients (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = ClientProfile.objects.all().select_related('user')
-    #serializer_class = ClientProfileSerializer
     serializer_class = ClientCreateSerializer
     
     def get_queryset(self):
@@ -249,51 +231,27 @@ class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
         return queryset
     
     def create(self, request):
-        """Create a new client"""
         try:
-            user_data = request.data.get('user', {})
-            client_data = request.data.get('client', {})
-            
-            if 'password' in user_data:
-                user_data['password'] = make_password(user_data['password'])
-            
-            user_data['role'] = 'client'
-            user_data['is_active'] = True
-            
-            user_serializer = UserSerializer(data=user_data)
-            if not user_serializer.is_valid():
-                return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
-            user = user_serializer.save()
-            
-            client_data['user'] = user  # ← Send user instance, not ID
-            client_serializer = self.get_serializer(data=client_data)
-            
-            if client_serializer.is_valid():
-                client_serializer.save()
+            serializer = self.get_serializer(data=request.data)
+            if serializer.is_valid():
+                client = serializer.save()
                 
                 AdminLog.objects.create(
                     admin=request.user,
                     action='user_created',
-                    description=f'Created client: {user.get_full_name()}',
+                    description=f'Created client: {client.user.get_full_name()}',
                     ip_address=self.get_client_ip(request),
                     user_agent=request.META.get('HTTP_USER_AGENT', '')
                 )
                 
-                return Response(client_serializer.data, status=status.HTTP_201_CREATED)
-            else:
-                user.delete()
-                return Response(client_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
                 
         except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['patch'])
     def toggle_active(self, request, pk=None):
-        """Toggle client's active status"""
         client = self.get_object()
         user = client.user
         
@@ -317,7 +275,6 @@ class ClientViewSet(viewsets.ModelViewSet, AdminMixin):
         return Response({'status': action})
 
 class ConsultationViewSet(viewsets.ModelViewSet, AdminMixin):
-    """Manage consultations (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = ConsultationRequest.objects.all().select_related('client', 'professional__user', 'category')
     serializer_class = ConsultationSerializer
@@ -360,14 +317,12 @@ class ConsultationViewSet(viewsets.ModelViewSet, AdminMixin):
     
     @action(detail=False, methods=['get'])
     def recent(self, request):
-        """Get recent consultations"""
         consultations = self.get_queryset().order_by('-created_at')[:50]
         serializer = self.get_serializer(consultations, many=True)
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        """Get consultation statistics"""
         end_date = timezone.now().date()
         start_date = end_date - timedelta(days=6)
         
@@ -408,7 +363,6 @@ class ConsultationViewSet(viewsets.ModelViewSet, AdminMixin):
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        """Cancel a consultation"""
         consultation = self.get_object()
         
         if consultation.status in ['completed', 'cancelled']:
@@ -431,14 +385,12 @@ class ConsultationViewSet(viewsets.ModelViewSet, AdminMixin):
         return Response({'status': 'cancelled'})
 
 class ReportViewSet(viewsets.ModelViewSet, AdminMixin):
-    """Manage reports (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = Report.objects.all()
     serializer_class = ReportSerializer
     
     @action(detail=False, methods=['post'])
     def generate(self, request):
-        """Generate a new report"""
         report_type = request.data.get('report_type')
         period_start = request.data.get('period_start')
         period_end = request.data.get('period_end')
@@ -504,7 +456,6 @@ class ReportViewSet(viewsets.ModelViewSet, AdminMixin):
     
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
-        """Download report in CSV format"""
         report = self.get_object()
         
         if report.status != 'generated':
@@ -717,7 +668,6 @@ class ReportViewSet(viewsets.ModelViewSet, AdminMixin):
         }
 
 class UserViewSet(viewsets.ModelViewSet, AdminMixin):
-    """Manage all users (admin only)"""
     permission_classes = [IsAdminUser]
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -748,7 +698,6 @@ class UserViewSet(viewsets.ModelViewSet, AdminMixin):
     
     @action(detail=True, methods=['patch'])
     def toggle_active(self, request, pk=None):
-        """Toggle user active status"""
         user = self.get_object()
         
         serializer = UserStatusSerializer(data=request.data)
@@ -768,4 +717,4 @@ class UserViewSet(viewsets.ModelViewSet, AdminMixin):
             user_agent=request.META.get('HTTP_USER_AGENT', '')
         )
         
-        return Response({'status': action})
+        return Response({'status': action})   can you give full of this without leaving any important informatiion behind
