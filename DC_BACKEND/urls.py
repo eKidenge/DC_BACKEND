@@ -4,6 +4,7 @@ from django.http import JsonResponse
 from django.conf import settings
 from django.conf.urls.static import static
 from dashboard import views as dashboard_views
+from accounts.views import debug_db_status  # Add this import
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -21,6 +22,7 @@ urlpatterns = [
     path('api/call-requests/<int:pk>/update-status/', dashboard_views.update_call_status, name='update_call_status'),
     path('api/call-requests/<int:pk>/cancel/', dashboard_views.cancel_call_request, name='cancel_call_request'),
     path('api/call-requests/pending/', dashboard_views.professional_pending_calls, name='professional_pending_calls'),
+    path('debug/db/', debug_db_status, name='debug_db'),  # Add this line
     
     # API info at root
     path('', lambda request: JsonResponse({
