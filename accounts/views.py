@@ -205,3 +205,62 @@ class ServiceCategoriesView(APIView):
                 {'error': f'Error fetching categories: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ADDED TO MONITOR DB JAN 13TH
+# Add to accounts/views.py
+import time
+import json
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.apps import apps
+
+# Global storage for snapshots
+_db_snapshots = []
+_max_snapshots = 5
+
+@csrf_exempt
+def debug_db_status(request):
+    """Simple endpoint to monitor database state"""
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'})
+    
+    # Get current counts for all models
+    models = apps.get_models()
+    current_state = {}
+    
+    for model in models:
+        try:
+            current_state[model.__name__] = model.objects.count()
+        except:
+            current_state[model.__name__] = 'ERROR'
+    
+    # Store snapshot
+    snapshot = {
+        'timestamp': time.strftime('%H:%M:%S'),
+        'state': current_state
+    }
+    
+    _db_snapshots.append(snapshot)
+    if len(_db_snapshots) > _max_snapshots:
+        _db_snapshots.pop(0)
+    
+    # Check if anything changed from previous snapshot
+    changed = []
+    if len(_db_snapshots) > 1:
+        prev = _db_snapshots[-2]['state']
+        for model_name, count in current_state.items():
+            if model_name in prev and prev[model_name] != count:
+                changed.append({
+                    'model': model_name,
+                    'from': prev[model_name],
+                    'to': count
+                })
+    
+    return JsonResponse({
+        'current_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'current_counts': current_state,
+        'changed_since_last_check': changed,
+        'recent_snapshots': _db_snapshots,
+        'total_models': len(models)
+    })
